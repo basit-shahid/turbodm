@@ -2,6 +2,8 @@
 let downloads = [];
 let clipboardUrl = null;
 let toastTimeout = null;
+let currentFilter = 'all';
+let searchQuery = '';
 
 // ===== DOM REFS =====
 const $downloadList = document.getElementById('download-list');
@@ -164,11 +166,31 @@ function renderDownloadItem(dl) {
 
 // ===== RENDER ALL =====
 function renderDownloads() {
-  if (downloads.length === 0) {
+  const filtered = downloads.filter(d => {
+    // Search query filter
+    if (searchQuery && !d.fileName.toLowerCase().includes(searchQuery.toLowerCase())) {
+      return false;
+    }
+
+    // Category filter
+    if (currentFilter === 'all') return true;
+    if (currentFilter === 'downloading') return d.status === 'downloading' || d.status === 'pending';
+    if (currentFilter === 'completed') return d.status === 'completed';
+    if (currentFilter === 'paused') return d.status === 'paused' || d.status === 'failed';
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    if (downloads.length === 0) {
+      $emptyState.querySelector('h3').textContent = 'No Downloads Yet';
+      $emptyState.querySelector('p').innerHTML = 'Click <strong>Add URL</strong> or copy a download link to get started';
+    } else {
+      $emptyState.querySelector('h3').textContent = 'No Downloads Found';
+      $emptyState.querySelector('p').textContent = 'Try changing your filter or search criteria';
+    }
     $emptyState.style.display = '';
-    // Remove any download items
-    const items = $downloadList.querySelectorAll('.download-item');
-    items.forEach(el => el.remove());
+    $downloadList.querySelectorAll('.download-item').forEach(el => el.remove());
+    updateStatusBar();
     return;
   }
 
@@ -176,7 +198,7 @@ function renderDownloads() {
 
   // Sort: active first, then paused, pending, failed, completed
   const statusOrder = { downloading: 0, paused: 1, pending: 2, failed: 3, completed: 4, cancelled: 5 };
-  const sorted = [...downloads].sort((a, b) => (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9));
+  const sorted = [...filtered].sort((a, b) => (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9));
 
   $downloadList.innerHTML = sorted.map(renderDownloadItem).join('');
   updateStatusBar();
@@ -241,8 +263,8 @@ function updateDownloadInPlace(state) {
       existing.replaceWith(temp.firstElementChild);
     }
   } else {
-    $emptyState.style.display = 'none';
-    $downloadList.insertAdjacentHTML('afterbegin', renderDownloadItem(state));
+    // New item - re-render the whole list to respect filters/sorting
+    renderDownloads();
   }
   updateStatusBar();
 }
@@ -274,14 +296,23 @@ async function cancelDownload(id) {
 }
 
 async function retryDownload(id, url) {
+  const dl = downloads.find(d => d.id === id);
+  if (!dl) return;
+
+  // Optimistically set to pending to show we are trying
+  dl.status = 'pending';
+  dl.error = null;
+  updateDownloadInPlace(dl);
+
   const result = await window.tdm.resumeDownload(id);
   if (result && !result.error) {
     updateDownloadInPlace(result);
   } else {
-    // Fallback if resumption is structurally impossible
-    await window.tdm.cancelDownload(id);
-    downloads = downloads.filter(d => d.id !== id);
-    showAddModal(url);
+    // If it still fails, keep it in the list with the new error
+    const errorMsg = (result && result.error) ? result.error : 'Retry failed. Check your connection.';
+    dl.status = 'failed';
+    dl.error = errorMsg;
+    updateDownloadInPlace(dl);
   }
 }
 
@@ -437,9 +468,13 @@ document.getElementById('btn-resume-all').addEventListener('click', () => {
 document.getElementById('btn-pause-all').addEventListener('click', () => {
   downloads.filter(d => d.status === 'downloading').forEach(d => pauseDownload(d.id));
 });
+document.getElementById('btn-retry-all').addEventListener('click', () => {
+  downloads.filter(d => d.status === 'failed').forEach(d => retryDownload(d.id, d.url));
+});
 document.getElementById('btn-clear').addEventListener('click', async () => {
   await window.tdm.clearCompleted();
-  downloads = downloads.filter(d => d.status !== 'completed' && d.status !== 'cancelled' && d.status !== 'failed');
+  // We only filter out completed and cancelled. We KEEP 'failed' to avoid accidental data loss.
+  downloads = downloads.filter(d => d.status !== 'completed' && d.status !== 'cancelled');
   renderDownloads();
 });
 document.getElementById('btn-settings').addEventListener('click', showSettings);
@@ -478,6 +513,22 @@ document.getElementById('toast-download').addEventListener('click', () => {
   hideClipboardToast();
   showAddModal(clipboardUrl);
 });
+// Sidebar Filters
+document.querySelectorAll('.sidebar-item').forEach(item => {
+  item.addEventListener('click', () => {
+    document.querySelectorAll('.sidebar-item').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+    currentFilter = item.dataset.filter;
+    renderDownloads();
+  });
+});
+
+// Search
+document.getElementById('search-input').addEventListener('input', (e) => {
+  searchQuery = e.target.value;
+  renderDownloads();
+});
+
 document.getElementById('toast-dismiss').addEventListener('click', hideClipboardToast);
 
 // Title bar

@@ -204,6 +204,10 @@ class DownloadEngine extends EventEmitter {
     return chunks;
   }
 
+  _calculateDownloadedBytes() {
+    return this.chunks.reduce((sum, c) => sum + c.downloaded, 0);
+  }
+
   async _downloadAllChunks() {
     const promises = this.chunks
       .filter(c => c.status !== 'completed')
@@ -248,6 +252,10 @@ class DownloadEngine extends EventEmitter {
 
         if (res.statusCode >= 400) {
           if (attempt < this.retryAttempts) {
+            // Reset progress for this chunk if server doesn't support resuming
+            if (!this.supportsRange) {
+               chunk.downloaded = 0;
+            }
             setTimeout(() => {
               this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
             }, this.retryDelay * (attempt + 1));
@@ -268,7 +276,6 @@ class DownloadEngine extends EventEmitter {
           }
           writeStream.write(data);
           chunk.downloaded += data.length;
-          this.downloadedBytes += data.length;
         });
 
         res.on('end', () => {
@@ -411,20 +418,21 @@ class DownloadEngine extends EventEmitter {
       const now = Date.now();
       const elapsed = (now - this.lastSpeedCalcTime) / 1000;
       if (elapsed > 0) {
-        const bytesDiff = this.downloadedBytes - this.lastSpeedCalcBytes;
-        const currentSpeed = bytesDiff / elapsed;
+        const currentBytes = this._calculateDownloadedBytes();
+        const bytesDiff = currentBytes - this.lastSpeedCalcBytes;
+        const currentSpeed = Math.max(0, bytesDiff / elapsed);
         this.speedHistory.push(currentSpeed);
         if (this.speedHistory.length > 5) this.speedHistory.shift();
         this.speed = this.speedHistory.reduce((a, b) => a + b, 0) / this.speedHistory.length;
 
         if (this.speed > 0 && this.fileSize > 0) {
-          this.eta = Math.ceil((this.fileSize - this.downloadedBytes) / this.speed);
+          this.eta = Math.ceil((this.fileSize - currentBytes) / this.speed);
         } else {
           this.eta = 0;
         }
 
         this.lastSpeedCalcTime = now;
-        this.lastSpeedCalcBytes = this.downloadedBytes;
+        this.lastSpeedCalcBytes = currentBytes;
       }
     }, 500);
 
@@ -455,14 +463,15 @@ class DownloadEngine extends EventEmitter {
   }
 
   getState() {
-    const progress = this.fileSize > 0 ? (this.downloadedBytes / this.fileSize) * 100 : 0;
+    const currentBytes = this._calculateDownloadedBytes();
+    const progress = this.fileSize > 0 ? (currentBytes / this.fileSize) * 100 : 0;
     return {
       id: this.id,
       url: this.url,
       fileName: this.fileName,
       savePath: this.savePath,
       fileSize: this.fileSize,
-      downloadedBytes: this.downloadedBytes,
+      downloadedBytes: currentBytes,
       progress: Math.min(progress, 100),
       speed: this.speed,
       eta: this.eta,

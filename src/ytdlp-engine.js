@@ -149,7 +149,7 @@ class YtDlpEngine extends EventEmitter {
 
       // Infer downloadedBytes
       if (this.fileSize > 0 && this.progress > 0) {
-        this.downloadedBytes = (this.progress / 100) * this.fileSize;
+        this.downloadedBytes = Math.min(this.fileSize, (this.progress / 100) * this.fileSize);
       }
     }
   }
