@@ -146,6 +146,10 @@ function setupIPC() {
     return downloadManager.cancelDownload(id);
   });
 
+  ipcMain.handle('set-download-mode', async (_event, id, mode) => {
+    return await downloadManager.setDownloadMode(id, mode);
+  });
+
   ipcMain.handle('clear-completed', () => {
     return downloadManager.clearCompleted();
   });

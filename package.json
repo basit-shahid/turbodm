@@ -7,7 +7,8 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "build": "electron-builder --win",
-    "rebuild": "electron-builder --win --dir"
+    "rebuild": "electron-builder --win --dir",
+    "test:parallel-fallback": "node scripts/test-parallel-fallback.js"
   },
   "keywords": [
     "download",

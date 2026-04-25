@@ -52,14 +52,46 @@ function createOverlayButton(videoElement) {
     }).catch(e => console.error('TurboDM server missing.'));
   };
 
-  // Show button on hover
-  container.addEventListener('mouseenter', () => btn.style.opacity = '1');
-  container.addEventListener('mouseleave', () => btn.style.opacity = '0');
+  let hideTimer = null;
+
+  const setVisible = (isVisible) => {
+    btn.style.opacity = isVisible ? '1' : '0';
+    btn.style.pointerEvents = isVisible ? 'auto' : 'none';
+  };
+
+  const showButton = () => {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    setVisible(true);
+  };
+
+  const hideButton = () => {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+    }
+
+    hideTimer = setTimeout(() => {
+      if (!container.matches(':hover') && !btn.matches(':hover')) {
+        setVisible(false);
+      }
+      hideTimer = null;
+    }, 80);
+  };
+
+  // Keep the button visible while the pointer moves between the wrapper and the button itself.
+  container.addEventListener('pointerenter', showButton);
+  container.addEventListener('pointerleave', hideButton);
+  btn.addEventListener('pointerenter', showButton);
+  btn.addEventListener('pointerleave', hideButton);
   
   // Ensure the parent is positioned so absolute positioning works
   if (window.getComputedStyle(container).position === 'static') {
     container.style.position = 'relative';
   }
+
+  setVisible(false);
 
   container.appendChild(btn);
 }

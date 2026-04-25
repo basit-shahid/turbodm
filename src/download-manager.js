@@ -28,6 +28,7 @@ class DownloadManager extends EventEmitter {
           connections: d.connections,
           fileName: d.fileName,
           id: d.id,
+          modePreference: d.modePreference,
         });
         
         engine.fileSize = d.fileSize;
@@ -35,6 +36,9 @@ class DownloadManager extends EventEmitter {
         engine.supportsRange = d.supportsRange;
         engine.mimeType = d.mimeType;
         engine.redirectedUrl = d.redirectedUrl;
+        engine.connectionMode = d.connectionMode || (d.supportsRange ? 'parallel' : 'single');
+        engine.transportNotice = d.transportNotice || '';
+        engine.modePreference = d.modePreference || 'auto';
         engine.status = (d.status === 'downloading' || d.status === 'pending') ? 'paused' : d.status;
         engine.chunks = d.chunks || [];
         
@@ -122,7 +126,8 @@ class DownloadManager extends EventEmitter {
       connections: options.connections || this.defaultConnections,
       fileName: options.fileName,
       id: options.id,
-      formatId: options.formatId
+      formatId: options.formatId,
+      modePreference: options.modePreference || 'auto',
     });
 
     // Get file info first
@@ -187,6 +192,29 @@ class DownloadManager extends EventEmitter {
       return true;
     }
     return false;
+  }
+
+  async setDownloadMode(id, mode) {
+    const entry = this.downloads.get(id);
+    if (!entry || !entry.engine) {
+      return { error: 'Download not found' };
+    }
+
+    if (entry.engine instanceof YtDlpEngine) {
+      return { error: 'Mode switching is not supported for streaming downloads.' };
+    }
+
+    if (typeof entry.engine.setMode !== 'function') {
+      return { error: 'Mode switching is unavailable for this download.' };
+    }
+
+    try {
+      const state = await entry.engine.setMode(mode);
+      this._saveState();
+      return state;
+    } catch (err) {
+      return { error: err.message || 'Failed to switch download mode.' };
+    }
   }
 
   clearCompleted() {

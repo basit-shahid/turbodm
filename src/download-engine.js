@@ -14,6 +14,9 @@ class DownloadEngine extends EventEmitter {
     this.connections = options.connections || 16;
     this.retryAttempts = options.retryAttempts || 3;
     this.retryDelay = options.retryDelay || 2000;
+    this.minChunkSize = options.minChunkSize || (2 * 1024 * 1024); // 2 MB per chunk minimum
+    this.rangeProbeTimeout = options.rangeProbeTimeout || 10000;
+    this.modePreference = options.modePreference || 'auto'; // auto, parallel, single
 
     this.id = options.id || Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
     // Extract filename from URL, properly decode %20 etc.
@@ -39,6 +42,18 @@ class DownloadEngine extends EventEmitter {
     this.error = null;
     this.mimeType = '';
     this.redirectedUrl = null;
+    this.transportNotice = '';
+    this.connectionMode = 'single';
+  }
+
+  _setTransportNotice(message) {
+    this.transportNotice = message || '';
+  }
+
+  _normalizeMode(mode) {
+    if (mode === 'series') return 'single';
+    if (mode === 'parallel' || mode === 'single' || mode === 'auto') return mode;
+    return 'auto';
   }
 
   async getFileInfo() {
@@ -60,10 +75,10 @@ class DownloadEngine extends EventEmitter {
           headers: {
             'User-Agent': 'TurboDM/1.0',
           },
-          timeout: 15000,
+          timeout: this.rangeProbeTimeout,
         };
 
-        const req = client.request(reqOptions, (res) => {
+        const req = client.request(reqOptions, async (res) => {
           if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
             const redirectUrl = new URL(res.headers.location, requestUrl).href;
             this.redirectedUrl = redirectUrl;
@@ -81,7 +96,7 @@ class DownloadEngine extends EventEmitter {
           this.mimeType = res.headers['content-type'] || '';
 
           this.fileSize = isNaN(contentLength) ? 0 : contentLength;
-          this.supportsRange = acceptRanges === 'bytes' && this.fileSize > 0;
+          const declaredRangeSupport = acceptRanges === 'bytes' && this.fileSize > 0;
 
           // 1. Always prefer Content-Disposition header (server's explicit filename)
           const disposition = res.headers['content-disposition'];
@@ -111,11 +126,44 @@ class DownloadEngine extends EventEmitter {
              }
           }
 
+          let verifiedRangeSupport = false;
+          if (declaredRangeSupport) {
+            const rangeCheckUrl = this.redirectedUrl || requestUrl;
+            verifiedRangeSupport = await this._verifyRangeSupport(rangeCheckUrl);
+          }
+
+          this.modePreference = this._normalizeMode(this.modePreference);
+          if (this.modePreference === 'single') {
+            this.supportsRange = false;
+            this.connectionMode = 'single';
+            this._setTransportNotice('Series mode selected by user. Using single connection.');
+          } else if (this.modePreference === 'parallel') {
+            this.supportsRange = declaredRangeSupport;
+            this.connectionMode = this.supportsRange ? 'parallel' : 'single';
+            if (!declaredRangeSupport) {
+              this._setTransportNotice('Server does not declare byte ranges. Parallel mode cannot be applied.');
+            } else if (!verifiedRangeSupport) {
+              this._setTransportNotice('Parallel mode forced by user. Server range behavior may be unstable.');
+            } else {
+              this._setTransportNotice('');
+            }
+          } else {
+            this.supportsRange = declaredRangeSupport && verifiedRangeSupport;
+            if (!this.supportsRange) {
+              this.connectionMode = 'single';
+              this._setTransportNotice('Server does not support stable parallel ranges. Using single connection.');
+            } else {
+              this.connectionMode = 'parallel';
+              this._setTransportNotice('');
+            }
+          }
+
           resolve({
             fileSize: this.fileSize,
             supportsRange: this.supportsRange,
             fileName: this.fileName,
             mimeType: this.mimeType,
+            modePreference: this.modePreference,
           });
         });
 
@@ -131,6 +179,73 @@ class DownloadEngine extends EventEmitter {
     });
   }
 
+  async _verifyRangeSupport(requestUrl) {
+    return new Promise((resolve) => {
+      const makeRequest = (rangeUrl, redirectCount = 0) => {
+        if (redirectCount > 5) {
+          resolve(false);
+          return;
+        }
+
+        const parsedUrl = new URL(rangeUrl);
+        const client = parsedUrl.protocol === 'https:' ? https : http;
+        const reqOptions = {
+          hostname: parsedUrl.hostname,
+          port: parsedUrl.port,
+          path: parsedUrl.pathname + parsedUrl.search,
+          method: 'GET',
+          headers: {
+            'User-Agent': 'TurboDM/1.0',
+            'Range': 'bytes=0-0',
+          },
+          timeout: this.rangeProbeTimeout,
+        };
+
+        const req = client.request(reqOptions, (res) => {
+          if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+            const redirectUrl = new URL(res.headers.location, rangeUrl).href;
+            this.redirectedUrl = redirectUrl;
+            makeRequest(redirectUrl, redirectCount + 1);
+            return;
+          }
+
+          if (res.statusCode !== 206) {
+            res.resume();
+            resolve(false);
+            return;
+          }
+
+          const contentRange = res.headers['content-range'] || '';
+          const match = /bytes\s+0-0\/(\d+|\*)/i.exec(contentRange);
+          if (!match) {
+            res.resume();
+            resolve(false);
+            return;
+          }
+
+          if (match[1] !== '*') {
+            const totalSize = parseInt(match[1], 10);
+            if (!isNaN(totalSize) && totalSize > 0) {
+              this.fileSize = totalSize;
+            }
+          }
+
+          res.resume();
+          resolve(true);
+        });
+
+        req.on('error', () => resolve(false));
+        req.on('timeout', () => {
+          req.destroy();
+          resolve(false);
+        });
+        req.end();
+      };
+
+      makeRequest(requestUrl);
+    });
+  }
+
   async start(existingChunks = null) {
     try {
       if (!existingChunks) {
@@ -138,6 +253,7 @@ class DownloadEngine extends EventEmitter {
       }
 
       this.status = 'downloading';
+      this.error = null;
       this.startTime = Date.now();
       this.lastSpeedCalcTime = Date.now();
       this.lastSpeedCalcBytes = 0;
@@ -150,23 +266,38 @@ class DownloadEngine extends EventEmitter {
       if (existingChunks) {
         this.chunks = existingChunks;
         this.downloadedBytes = this.chunks.reduce((sum, c) => sum + c.downloaded, 0);
+        this.connectionMode = this.supportsRange ? 'parallel' : 'single';
       } else if (this.supportsRange && this.fileSize > 0) {
         this.chunks = this._createChunks();
+        this.connectionMode = this.connections > 1 ? 'parallel' : 'single';
       } else {
         this.chunks = [{
           index: 0,
           start: 0,
-          end: this.fileSize || Infinity,
+          end: this.fileSize > 0 ? this.fileSize - 1 : Infinity,
           downloaded: 0,
           status: 'pending',
           tempFile: path.join(this.tempDir, 'chunk_0'),
         }];
         this.connections = 1;
+        this.connectionMode = 'single';
       }
 
       this.emit('start', this.getState());
       this._startSpeedCalculation();
-      await this._downloadAllChunks();
+      try {
+        await this._downloadAllChunks();
+      } catch (err) {
+        if (this._isRangeFallbackError(err) && this.status === 'downloading') {
+          if (this.modePreference === 'parallel') {
+            this._setTransportNotice('Parallel mode is forced. Switch to series mode if this server keeps failing range chunks.');
+            throw err;
+          }
+          await this._fallbackToSingleConnection();
+        } else {
+          throw err;
+        }
+      }
 
       if (this.status === 'downloading') {
         await this._mergeChunks();
@@ -186,9 +317,16 @@ class DownloadEngine extends EventEmitter {
   }
 
   _createChunks() {
-    const chunkSize = Math.ceil(this.fileSize / this.connections);
+    const maxReasonableConnections = Math.max(1, Math.ceil(this.fileSize / this.minChunkSize));
+    const effectiveConnections = Math.max(1, Math.min(this.connections, maxReasonableConnections));
+    if (effectiveConnections < this.connections) {
+      this._setTransportNotice(`Adjusted parallel connections to ${effectiveConnections} for stable chunk sizing.`);
+    }
+    this.connections = effectiveConnections;
+
+    const chunkSize = Math.ceil(this.fileSize / effectiveConnections);
     const chunks = [];
-    for (let i = 0; i < this.connections; i++) {
+    for (let i = 0; i < effectiveConnections; i++) {
       const start = i * chunkSize;
       const end = Math.min(start + chunkSize - 1, this.fileSize - 1);
       if (start > this.fileSize - 1) break;
@@ -206,6 +344,78 @@ class DownloadEngine extends EventEmitter {
 
   _calculateDownloadedBytes() {
     return this.chunks.reduce((sum, c) => sum + c.downloaded, 0);
+  }
+
+  _isRangeFallbackError(err) {
+    return !!(err && err.code === 'RANGE_NOT_RELIABLE');
+  }
+
+  async _fallbackToSingleConnection() {
+    this.activeRequests.forEach(({ req, res, writeStream }) => {
+      try {
+        if (res) res.destroy();
+        if (req) req.destroy();
+        if (writeStream) writeStream.end();
+      } catch (e) { /* ignore cleanup errors */ }
+    });
+    this.activeRequests = [];
+
+    try {
+      if (this.tempDir && fs.existsSync(this.tempDir)) {
+        fs.rmSync(this.tempDir, { recursive: true, force: true });
+      }
+      fs.mkdirSync(this.tempDir, { recursive: true });
+    } catch (e) { /* ignore */ }
+
+    this.supportsRange = false;
+    this.connections = 1;
+    this.connectionMode = 'single';
+    this._setTransportNotice('Parallel range mode was unstable on this server. Switched to single connection automatically.');
+    this.chunks = [{
+      index: 0,
+      start: 0,
+      end: this.fileSize > 0 ? this.fileSize - 1 : Infinity,
+      downloaded: 0,
+      status: 'pending',
+      tempFile: path.join(this.tempDir, 'chunk_0'),
+    }];
+
+    await this._downloadAllChunks();
+  }
+
+  async setMode(mode) {
+    const normalizedMode = this._normalizeMode(mode);
+    this.modePreference = normalizedMode;
+
+    if (this.status === 'completed' || this.status === 'cancelled') {
+      return this.getState();
+    }
+
+    if (this.status === 'downloading') {
+      this.pause();
+    }
+
+    this.activeRequests.forEach(({ req, res, writeStream }) => {
+      try {
+        if (res) res.destroy();
+        if (req) req.destroy();
+        if (writeStream) writeStream.end();
+      } catch (e) { /* ignore cleanup errors */ }
+    });
+    this.activeRequests = [];
+
+    this._stopSpeedCalculation();
+    this._cleanup();
+
+    this.chunks = [];
+    this.downloadedBytes = 0;
+    this.speed = 0;
+    this.eta = 0;
+    this.error = null;
+    this.status = 'pending';
+
+    await this.start();
+    return this.getState();
   }
 
   async _downloadAllChunks() {
@@ -228,9 +438,25 @@ class DownloadEngine extends EventEmitter {
       const client = parsedUrl.protocol === 'https:' ? https : http;
 
       const headers = { 'User-Agent': 'TurboDM/1.0' };
+      const expectedChunkSize = Number.isFinite(chunk.end) ? (chunk.end - chunk.start + 1) : Infinity;
 
       if (this.supportsRange) {
+        this.connectionMode = 'parallel';
+        if (Number.isFinite(expectedChunkSize) && chunk.downloaded >= expectedChunkSize) {
+          chunk.downloaded = expectedChunkSize;
+          chunk.status = 'completed';
+          resolve();
+          return;
+        }
+
         const startByte = chunk.start + chunk.downloaded;
+        if (startByte > chunk.end) {
+          chunk.downloaded = expectedChunkSize;
+          chunk.status = 'completed';
+          resolve();
+          return;
+        }
+
         headers['Range'] = `bytes=${startByte}-${chunk.end}`;
       }
 
@@ -247,6 +473,24 @@ class DownloadEngine extends EventEmitter {
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
           this.redirectedUrl = new URL(res.headers.location, downloadUrl).href;
           this._downloadChunk(chunk, attempt).then(resolve).catch(reject);
+          return;
+        }
+
+        if (this.supportsRange && res.statusCode === 416) {
+          if (Number.isFinite(expectedChunkSize) && chunk.downloaded >= expectedChunkSize) {
+            chunk.downloaded = expectedChunkSize;
+            chunk.status = 'completed';
+            resolve();
+            return;
+          }
+
+          reject(Object.assign(new Error(`HTTP 416 for chunk ${chunk.index}`), { code: 'RANGE_NOT_RELIABLE' }));
+          return;
+        }
+
+        if (this.supportsRange && Number.isFinite(chunk.end) && res.statusCode !== 206) {
+          res.resume();
+          reject(Object.assign(new Error(`Server ignored range request for chunk ${chunk.index}`), { code: 'RANGE_NOT_RELIABLE' }));
           return;
         }
 
@@ -280,6 +524,22 @@ class DownloadEngine extends EventEmitter {
 
         res.on('end', () => {
           writeStream.end(() => {
+            if (this.supportsRange && Number.isFinite(expectedChunkSize) && chunk.downloaded < expectedChunkSize) {
+              if (attempt < this.retryAttempts && this.status === 'downloading') {
+                setTimeout(() => {
+                  this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
+                }, this.retryDelay * (attempt + 1));
+                return;
+              }
+              chunk.status = 'failed';
+              reject(new Error(`Incomplete chunk ${chunk.index}`));
+              return;
+            }
+
+            if (this.supportsRange && Number.isFinite(expectedChunkSize)) {
+              chunk.downloaded = Math.min(chunk.downloaded, expectedChunkSize);
+            }
+
             if (this.status !== 'paused' && this.status !== 'cancelled') {
               chunk.status = 'completed';
             }
@@ -380,7 +640,20 @@ class DownloadEngine extends EventEmitter {
     this._startSpeedCalculation();
 
     try {
-      await this._downloadAllChunks();
+      try {
+        await this._downloadAllChunks();
+      } catch (err) {
+        if (this._isRangeFallbackError(err) && this.status === 'downloading') {
+          if (this.modePreference === 'parallel') {
+            this._setTransportNotice('Parallel mode is forced. Switch to series mode if this server keeps failing range chunks.');
+            throw err;
+          }
+          await this._fallbackToSingleConnection();
+        } else {
+          throw err;
+        }
+      }
+
       if (this.status === 'downloading') {
         await this._mergeChunks();
         this.status = 'completed';
@@ -489,6 +762,9 @@ class DownloadEngine extends EventEmitter {
       })),
       error: this.error,
       mimeType: this.mimeType,
+      modePreference: this.modePreference,
+      connectionMode: this.connectionMode,
+      transportNotice: this.transportNotice,
     };
   }
 
@@ -505,6 +781,9 @@ class DownloadEngine extends EventEmitter {
       supportsRange: this.supportsRange,
       mimeType: this.mimeType,
       redirectedUrl: this.redirectedUrl,
+      modePreference: this.modePreference,
+      connectionMode: this.connectionMode,
+      transportNotice: this.transportNotice,
       chunks: this.chunks.map(c => ({
         index: c.index,
         start: c.start,

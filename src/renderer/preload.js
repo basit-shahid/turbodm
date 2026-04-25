@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('tdm', {
   pauseDownload: (id) => ipcRenderer.invoke('pause-download', id),
   resumeDownload: (id) => ipcRenderer.invoke('resume-download', id),
   cancelDownload: (id) => ipcRenderer.invoke('cancel-download', id),
+  setDownloadMode: (id, mode) => ipcRenderer.invoke('set-download-mode', id, mode),
   clearCompleted: () => ipcRenderer.invoke('clear-completed'),
   getAllDownloads: () => ipcRenderer.invoke('get-all-downloads'),
 

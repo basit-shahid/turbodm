@@ -4,6 +4,7 @@ let clipboardUrl = null;
 let toastTimeout = null;
 let currentFilter = 'all';
 let searchQuery = '';
+let lastAnalyzedInfo = null;
 
 // ===== DOM REFS =====
 const $downloadList = document.getElementById('download-list');
@@ -52,6 +53,11 @@ function formatSpeed(bytesPerSec) {
   return formatBytes(bytesPerSec) + '/s';
 }
 
+function renderTransportNotice(dl) {
+  if (!dl.transportNotice) return '';
+  return `<div class="transport-notice">${dl.transportNotice}</div>`;
+}
+
 // ===== RENDER DOWNLOAD ITEM =====
 function renderDownloadItem(dl) {
   const type = getFileType(dl.fileName);
@@ -61,6 +67,12 @@ function renderDownloadItem(dl) {
   const isPaused = dl.status === 'paused';
   const isCompleted = dl.status === 'completed';
   const isFailed = dl.status === 'failed';
+  const currentMode = (dl.modePreference === 'parallel' || dl.modePreference === 'single')
+    ? dl.modePreference
+    : (dl.connectionMode === 'parallel' ? 'parallel' : 'single');
+  const modeLabel = currentMode === 'parallel' ? 'Parallel' : 'Series';
+  const canSwitchMode = !dl.isStreaming && !isCompleted && dl.status !== 'cancelled';
+  const nextMode = currentMode === 'parallel' ? 'single' : 'parallel';
 
   let sizeText = '';
   if (dl.fileSize > 0) {
@@ -70,8 +82,14 @@ function renderDownloadItem(dl) {
   }
 
   let actionsHtml = '';
+  const modeSwitchButton = canSwitchMode ? `
+      <button class="btn btn-ghost mode-toggle-btn mode-${currentMode}" onclick="switchDownloadMode('${dl.id}', '${nextMode}')" title="Switch to ${nextMode === 'parallel' ? 'Parallel' : 'Series'} mode">
+        ${modeLabel}
+      </button>` : '';
+
   if (isActive) {
     actionsHtml = `
+      ${modeSwitchButton}
       <button class="btn btn-ghost" onclick="pauseDownload('${dl.id}')" title="Pause">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/></svg>
       </button>
@@ -80,6 +98,7 @@ function renderDownloadItem(dl) {
       </button>`;
   } else if (isPaused) {
     actionsHtml = `
+      ${modeSwitchButton}
       <button class="btn btn-ghost" onclick="resumeDownload('${dl.id}')" title="Resume" style="color:var(--accent)">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M5 3L19 12L5 21V3Z" fill="currentColor"/></svg>
       </button>
@@ -99,6 +118,7 @@ function renderDownloadItem(dl) {
       </button>`;
   } else if (isFailed) {
     actionsHtml = `
+      ${modeSwitchButton}
       <button class="btn btn-ghost" onclick="retryDownload('${dl.id}', '${dl.url}')" title="Retry" style="color:var(--warning)">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M1 4V10H7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3.51 15C4.16 17.06 5.49 18.83 7.29 19.97C9.09 21.11 11.22 21.56 13.31 21.23C15.4 20.9 17.29 19.82 18.62 18.17C19.95 16.52 20.63 14.42 20.53 12.29C20.43 10.15 19.56 8.12 18.08 6.58C16.6 5.05 14.61 4.1 12.48 3.93C10.35 3.76 8.23 4.37 6.52 5.64L1 10" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -117,8 +137,10 @@ function renderDownloadItem(dl) {
   }
 
   let statusExtra = '';
+  const modeBadge = `<span class="mode-badge">${modeLabel}</span>`;
   if (isActive) {
     statusExtra = `
+      ${modeBadge}
       <span class="speed-indicator">${formatSpeed(dl.speed)}</span>
       <span class="connections-badge">
         <svg width="8" height="8" viewBox="0 0 24 24" fill="none"><path d="M12 2L12 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
@@ -126,7 +148,10 @@ function renderDownloadItem(dl) {
       </span>`;
   }
   if (isFailed && dl.error) {
-    statusExtra = `<span style="color:var(--error);font-size:10px">${dl.error}</span>`;
+    statusExtra = `${modeBadge}<span style="color:var(--error);font-size:10px">${dl.error}</span>`;
+  }
+  if (!statusExtra && !isCompleted && dl.status !== 'cancelled') {
+    statusExtra = modeBadge;
   }
 
   return `
@@ -156,6 +181,7 @@ function renderDownloadItem(dl) {
           <div class="progress-fill ${dl.status}" style="width:${progress}%"></div>
         </div>
         ${chunksHtml}
+        ${renderTransportNotice(dl)}
         <div class="progress-stats">
           <div class="progress-left">${statusExtra}</div>
           <div class="progress-right text-perc">${dl.fileSize > 0 ? progress.toFixed(1) + '%' : ''}</div>
@@ -255,6 +281,24 @@ function updateDownloadInPlace(state) {
       const speedEl = existing.querySelector('.speed-indicator');
       if (speedEl) speedEl.textContent = formatSpeed(state.speed);
 
+      const noticeEl = existing.querySelector('.transport-notice');
+      if (state.transportNotice) {
+        if (noticeEl) {
+          noticeEl.textContent = state.transportNotice;
+        } else {
+          const progressContainer = existing.querySelector('.progress-container');
+          const progressStats = existing.querySelector('.progress-stats');
+          if (progressContainer && progressStats) {
+            const noticeNode = document.createElement('div');
+            noticeNode.className = 'transport-notice';
+            noticeNode.textContent = state.transportNotice;
+            progressContainer.insertBefore(noticeNode, progressStats);
+          }
+        }
+      } else if (noticeEl) {
+        noticeEl.remove();
+      }
+
       // We rely on the rest largely staying identical while actively downloading
     } else {
       // If status changed (e.g. newly completed, paused), rewrite node completely
@@ -293,6 +337,18 @@ async function cancelDownload(id) {
   await window.tdm.cancelDownload(id);
   downloads = downloads.filter(d => d.id !== id);
   renderDownloads();
+}
+
+async function switchDownloadMode(id, mode) {
+  const result = await window.tdm.setDownloadMode(id, mode);
+  if (!result) return;
+
+  if (result.error) {
+    alert('Mode switch failed: ' + result.error);
+    return;
+  }
+
+  updateDownloadInPlace(result);
 }
 
 async function retryDownload(id, url) {
@@ -341,7 +397,9 @@ function hideAddModal() {
   $modalAdd.style.display = 'none';
   $inputUrl.value = '';
   $inputFilename.value = '';
+  document.getElementById('input-transfer-mode').value = 'auto';
   $fileInfo.style.display = 'none';
+  lastAnalyzedInfo = null;
 }
 
 async function analyzeUrl(url, formatId) {
@@ -354,6 +412,7 @@ async function analyzeUrl(url, formatId) {
   try {
     const info = await window.tdm.getFileInfo(url, formatId);
     if (info.error) {
+      lastAnalyzedInfo = null;
       $fileInfo.style.display = 'block';
       document.getElementById('info-filename').textContent = 'Error: ' + info.error;
       document.getElementById('info-filesize').textContent = '—';
@@ -364,16 +423,19 @@ async function analyzeUrl(url, formatId) {
       document.getElementById('info-filename').textContent = info.fileName || 'Unknown';
       document.getElementById('info-filesize').textContent = info.fileSize ? formatBytes(info.fileSize) : 'Unknown';
       document.getElementById('info-resumable').textContent = info.supportsRange ? '✓ Yes' : '✗ No';
-      document.getElementById('info-connections').textContent = info.supportsRange ? ($inputConnections.value || '16') : '1 (no range support)';
+      lastAnalyzedInfo = info;
+      updateAnalyzedConnectionInfo(info);
       $inputFilename.value = info.fileName || '';
       
       const $groupQuality = document.getElementById('group-quality');
       const $groupConnections = document.getElementById('group-connections');
+      const $groupTransferMode = document.getElementById('group-transfer-mode');
       const $inputQuality = document.getElementById('input-quality');
       
       if (info.isStreaming) {
         $groupQuality.style.display = 'block';
         $groupConnections.style.display = 'none';
+        $groupTransferMode.style.display = 'none';
         $inputQuality.innerHTML = `
           <option value="bestvideo+bestaudio/best">Best Quality (Auto)</option>
           <option value="bestvideo[height<=2160]+bestaudio/best">4K (2160p)</option>
@@ -386,9 +448,11 @@ async function analyzeUrl(url, formatId) {
       } else {
         $groupQuality.style.display = 'none';
         $groupConnections.style.display = 'block';
+        $groupTransferMode.style.display = 'block';
       }
     }
   } catch (err) {
+    lastAnalyzedInfo = null;
     $fileInfo.style.display = 'block';
     document.getElementById('info-filename').textContent = 'Error: ' + err.message;
   }
@@ -404,6 +468,7 @@ async function startDownload() {
   const options = {
     fileName: $inputFilename.value.trim() || undefined,
     connections: parseInt($inputConnections.value, 10) || 16,
+    modePreference: document.getElementById('input-transfer-mode').value || 'auto',
     formatId: document.getElementById('group-quality').style.display !== 'none' 
               ? document.getElementById('input-quality').value 
               : undefined,
@@ -417,6 +482,23 @@ async function startDownload() {
   } else if (result) {
     updateDownloadInPlace(result);
   }
+}
+
+function updateAnalyzedConnectionInfo(info) {
+  if (!info) return;
+
+  const transferMode = document.getElementById('input-transfer-mode').value || 'auto';
+  const isParallelRequested = transferMode === 'parallel' || transferMode === 'auto';
+  const supportsParallel = info.supportsRange && isParallelRequested;
+
+  if (transferMode === 'single') {
+    document.getElementById('info-connections').textContent = '1 (series mode)';
+    return;
+  }
+
+  document.getElementById('info-connections').textContent = supportsParallel
+    ? ($inputConnections.value || '16')
+    : '1 (no range support)';
 }
 
 // ===== SETTINGS MODAL =====
@@ -486,6 +568,8 @@ document.getElementById('btn-analyze').addEventListener('click', () => analyzeUr
 document.getElementById('input-quality').addEventListener('change', (e) => {
   analyzeUrl($inputUrl.value.trim(), e.target.value);
 });
+document.getElementById('input-connections').addEventListener('change', () => updateAnalyzedConnectionInfo(lastAnalyzedInfo));
+document.getElementById('input-transfer-mode').addEventListener('change', () => updateAnalyzedConnectionInfo(lastAnalyzedInfo));
 document.getElementById('btn-start-download').addEventListener('click', startDownload);
 $inputUrl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {

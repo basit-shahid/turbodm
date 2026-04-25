@@ -378,6 +378,49 @@ html, body {
 
 .download-item:hover::before { opacity: 1; }
 
+.transport-notice {
+  margin-top: 8px;
+  margin-bottom: 4px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: #b9f5ff;
+  background: rgba(0, 212, 255, 0.1);
+  border: 1px solid rgba(0, 212, 255, 0.22);
+}
+
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+
+.mode-toggle-btn {
+  font-size: 10px;
+  line-height: 1;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+}
+
+.mode-toggle-btn.mode-parallel {
+  color: #7ee8ff;
+  background: rgba(0, 212, 255, 0.14);
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+.mode-toggle-btn.mode-single {
+  color: #ffd48a;
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
 .download-item.downloading::before { opacity: 1; }
 
 @keyframes slideIn {
