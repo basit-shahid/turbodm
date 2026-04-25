@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TurboDM - Download Manager</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Title Bar -->
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-left">
+      <div class="app-icon">
+        <img src="../../build/icon.png" width="20" height="20" style="border-radius: 4px; object-fit: contain;">
+      </div>
+      <span class="app-title">TurboDM</span>
+      <span class="app-version">v1.0</span>
+    </div>
+    <div class="titlebar-right">
+      <button class="titlebar-btn" id="btn-minimize" title="Minimize">
+        <svg width="12" height="12" viewBox="0 0 12 12"><rect y="5" width="12" height="2" fill="currentColor" rx="1"/></svg>
+      </button>
+      <button class="titlebar-btn btn-close" id="btn-close" title="Close">
+        <svg width="12" height="12" viewBox="0 0 12 12"><path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <button class="btn btn-primary" id="btn-add" title="Add Download">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 5V19M5 12H19" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        <span>Add URL</span>
+      </button>
+      <button class="btn btn-ghost" id="btn-resume-all" title="Resume All">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 3L19 12L5 21V3Z" fill="currentColor"/></svg>
+      </button>
+      <button class="btn btn-ghost" id="btn-pause-all" title="Pause All">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="5" y="3" width="4" height="18" rx="1" fill="currentColor"/><rect x="15" y="3" width="4" height="18" rx="1" fill="currentColor"/></svg>
+      </button>
+      <div class="toolbar-divider"></div>
+      <button class="btn btn-ghost" id="btn-clear" title="Clear Completed">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6H5H21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M8 6V4C8 3.4 8.4 3 9 3H15C15.6 3 16 3.4 16 4V6M19 6V20C19 20.6 18.6 21 18 21H6C5.4 21 5 20.6 5 20V6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn btn-ghost" id="btn-settings" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" stroke="currentColor" stroke-width="2"/><path d="M19.4 15C19.2 15.3 19.2 15.7 19.4 16L20.5 17.8C20.6 18 20.6 18.3 20.4 18.4L18.4 20.4C18.2 20.6 18 20.6 17.8 20.5L16 19.4C15.7 19.2 15.3 19.2 15 19.4L14.8 19.5C14.5 19.7 14.3 20 14.3 20.4V22C14.3 22.3 14 22.5 13.8 22.5H10.2C10 22.5 9.7 22.3 9.7 22V20.4C9.7 20 9.5 19.7 9.2 19.5L9 19.4C8.7 19.2 8.3 19.2 8 19.4L6.2 20.5C6 20.6 5.7 20.6 5.6 20.4L3.6 18.4C3.4 18.2 3.4 18 3.5 17.8L4.6 16C4.8 15.7 4.8 15.3 4.6 15L4.5 14.8C4.3 14.5 4 14.3 3.6 14.3H2C1.7 14.3 1.5 14 1.5 13.8V10.2C1.5 10 1.7 9.7 2 9.7H3.6C4 9.7 4.3 9.5 4.5 9.2L4.6 9C4.8 8.7 4.8 8.3 4.6 8L3.5 6.2C3.4 6 3.4 5.7 3.6 5.6L5.6 3.6C5.8 3.4 6 3.4 6.2 3.5L8 4.6C8.3 4.8 8.7 4.8 9 4.6L9.2 4.5C9.5 4.3 9.7 4 9.7 3.6V2C9.7 1.7 10 1.5 10.2 1.5H13.8C14 1.5 14.3 1.7 14.3 2V3.6C14.3 4 14.5 4.3 14.8 4.5L15 4.6C15.3 4.8 15.7 4.8 16 4.6L17.8 3.5C18 3.4 18.3 3.4 18.4 3.6L20.4 5.6C20.6 5.8 20.6 6 20.5 6.2L19.4 8C19.2 8.3 19.2 8.7 19.4 9L19.5 9.2C19.7 9.5 20 9.7 20.4 9.7H22C22.3 9.7 22.5 10 22.5 10.2V13.8C22.5 14 22.3 14.3 22 14.3H20.4C20 14.3 19.7 14.5 19.5 14.8L19.4 15Z" stroke="currentColor" stroke-width="2"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Download List -->
+  <div class="download-list" id="download-list">
+    <!-- Empty State -->
+    <div class="empty-state" id="empty-state">
+      <div class="empty-icon">
+        <svg width="64" height="64" viewBox="0 0 24 24" fill="none" opacity="0.3">
+          <path d="M12 2L12 16M12 16L7 11M12 16L17 11" stroke="url(#grad2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M4 17V19C4 20.1 4.9 21 6 21H18C19.1 21 20 20.1 20 19V17" stroke="url(#grad2)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <defs><linearGradient id="grad2" x1="4" y1="2" x2="20" y2="21"><stop stop-color="#00d4ff"/><stop offset="1" stop-color="#7b2ff7"/></linearGradient></defs>
+        </svg>
+      </div>
+      <h3>No Downloads Yet</h3>
+      <p>Click <strong>Add URL</strong> or copy a download link to get started</p>
+    </div>
+  </div>
+
+  <!-- Status Bar -->
+  <div class="statusbar">
+    <div class="statusbar-left">
+      <span id="status-active">0 active</span>
+      <span class="status-dot">•</span>
+      <span id="status-total">0 downloads</span>
+    </div>
+    <div class="statusbar-right">
+      <span id="status-speed">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 2L12 18M12 18L7 13M12 18L17 13" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+        0 B/s
+      </span>
+    </div>
+  </div>
+
+  <!-- Add Download Modal -->
+  <div class="modal-overlay" id="modal-add" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Add Download</h2>
+        <button class="modal-close" id="modal-add-close">
+          <svg width="14" height="14" viewBox="0 0 12 12"><path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="input-url">Download URL</label>
+          <div class="input-row">
+            <input type="text" id="input-url" placeholder="https://example.com/file.zip" autocomplete="off" spellcheck="false">
+            <button class="btn btn-sm btn-accent" id="btn-analyze" title="Analyze URL">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="2"/><path d="M21 21L16.65 16.65" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="file-info" id="file-info" style="display:none">
+          <div class="info-grid">
+            <div class="info-item">
+              <span class="info-label">File Name</span>
+              <span class="info-value" id="info-filename">—</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">File Size</span>
+              <span class="info-value" id="info-filesize">—</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Resumable</span>
+              <span class="info-value" id="info-resumable">—</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">Connections</span>
+              <span class="info-value" id="info-connections">—</span>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="input-filename">Save As</label>
+          <input type="text" id="input-filename" placeholder="filename.zip">
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1" id="group-connections">
+            <label for="input-connections">Connections</label>
+            <select id="input-connections">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+              <option value="16" selected>16</option>
+              <option value="32">32</option>
+            </select>
+          </div>
+          <div class="form-group flex-1" id="group-quality" style="display:none">
+            <label for="input-quality">Video Quality</label>
+            <select id="input-quality">
+              <option value="best">Best Quality (Auto)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-cancel-add">Cancel</button>
+        <button class="btn btn-primary" id="btn-start-download">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L12 16M12 16L7 11M12 16L17 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 17V19C4 20.1 4.9 21 6 21H18C19.1 21 20 20.1 20 19V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Download
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="modal-settings" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="modal-close" id="modal-settings-close">
+          <svg width="14" height="14" viewBox="0 0 12 12"><path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="settings-dir">Default Download Directory</label>
+          <div class="input-row">
+            <input type="text" id="settings-dir" readonly>
+            <button class="btn btn-sm btn-accent" id="btn-browse-dir">Browse</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group flex-1">
+            <label for="settings-concurrent">Max Concurrent Downloads</label>
+            <select id="settings-concurrent">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3" selected>3</option>
+              <option value="5">5</option>
+              <option value="8">8</option>
+            </select>
+          </div>
+          <div class="form-group flex-1">
+            <label for="settings-connections">Default Connections</label>
+            <select id="settings-connections">
+              <option value="1">1</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+              <option value="16" selected>16</option>
+              <option value="32">32</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" id="btn-cancel-settings">Cancel</button>
+        <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Clipboard Toast -->
+  <div class="toast" id="clipboard-toast" style="display:none">
+    <div class="toast-content">
+      <div class="toast-icon">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L12 16M12 16L7 11M12 16L17 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4 17V19C4 20.1 4.9 21 6 21H18C19.1 21 20 20.1 20 19V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </div>
+      <div class="toast-text">
+        <span class="toast-title">Download Link Detected</span>
+        <span class="toast-url" id="toast-url"></span>
+      </div>
+    </div>
+    <div class="toast-actions">
+      <button class="btn btn-sm btn-primary" id="toast-download">Download</button>
+      <button class="btn btn-sm btn-ghost" id="toast-dismiss">Dismiss</button>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

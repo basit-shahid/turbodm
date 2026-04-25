@@ -1,0 +1,71 @@
+{
+  "name": "turbo-download-manager",
+  "version": "1.0.0",
+  "description": "High-end Internet Download Manager with 16-connection parallel downloading",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder --win",
+    "rebuild": "electron-builder --win --dir"
+  },
+  "keywords": [
+    "download",
+    "manager",
+    "parallel",
+    "accelerator"
+  ],
+  "author": "TurboDM",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.3.3",
+    "electron-builder": "^25.1.8"
+  },
+  "dependencies": {
+    "ffmpeg-static": "^5.3.0",
+    "mime-types": "^3.0.2",
+    "png-to-ico": "^3.0.1",
+    "yt-dlp-exec": "^1.0.2"
+  },
+  "build": {
+    "appId": "com.turbodm.app",
+    "productName": "TurboDM",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "src/**/*",
+      "build/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "browser-extension",
+        "to": "browser-extension"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TurboDM"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build Outputs
+dist/
+build/*.ico
+build/*.png
+build_error.txt
+
+# Editor/OS Files
+.vscode/
+.idea/
+.DS_Store
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Electron/Builder Caches
+.eslintcache
+package-lock.json
+
+# Temporary Files
+/tmp/
+*.tmp
+convert-icon.js
+convert-icon.mjs
+transcode-icon.mjs
+node_modules\7zip-bin\win\x64\7za_proxy.cs
+node_modules\7zip-bin\win\x64\7za_real.exe
+C:\Users\HP\AppData\Local\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0\rcedit_retry_proxy.cs
+C:\Users\HP\AppData\Local\electron-builder\Cache\winCodeSign\winCodeSign-2.6.0\rcedit_real.exe

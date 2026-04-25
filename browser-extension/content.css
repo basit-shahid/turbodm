@@ -1,0 +1,33 @@
+.turbodm-video-overlay-btn {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  background-color: rgba(10, 14, 26, 0.85);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.2s, background-color 0.2s;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+}
+
+.turbodm-video-overlay-btn:hover {
+  background-color: rgba(20, 24, 36, 0.95);
+  border-color: #3b82f6;
+  opacity: 1 !important;
+}
+
+.turbodm-video-overlay-btn svg {
+  width: 14px;
+  height: 14px;
+}
