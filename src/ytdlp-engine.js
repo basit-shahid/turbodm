@@ -1,8 +1,58 @@
 const { EventEmitter } = require('events');
-const ytdlp = require('yt-dlp-exec');
+const { app } = require('electron');
+const ytdlpExec = require('yt-dlp-exec');
 const fs = require('fs');
 const path = require('path');
-const ffmpegPath = require('ffmpeg-static');
+
+function resolveBundledBinaryPath(packageName, relativePath) {
+  const candidates = [];
+
+  // In packaged apps, binaries should be loaded from app.asar.unpacked.
+  if (app.isPackaged) {
+    candidates.push(
+      path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', packageName, relativePath)
+    );
+    candidates.push(
+      path.join(process.resourcesPath, 'node_modules', packageName, relativePath)
+    );
+
+    const appPath = app.getAppPath();
+    if (appPath && appPath.includes('app.asar')) {
+      candidates.push(
+        path.join(appPath.replace('app.asar', 'app.asar.unpacked'), 'node_modules', packageName, relativePath)
+      );
+    }
+  }
+
+  // In development, resolve from the installed package directory.
+  try {
+    candidates.push(path.join(path.dirname(require.resolve(`${packageName}/package.json`)), relativePath));
+  } catch (e) {
+    // Ignore and continue with cwd fallback below.
+  }
+
+  candidates.push(path.join(process.cwd(), 'node_modules', packageName, relativePath));
+
+  const found = candidates.find((candidatePath) => fs.existsSync(candidatePath));
+  return found || candidates[0] || path.join(process.cwd(), 'node_modules', packageName, relativePath);
+}
+
+const ytDlpBinaryName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+const ffmpegBinaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+
+// Use a getter to resolve paths lazily, ensuring app state is ready
+let _ytdlp = null;
+function getYtDlp() {
+  if (!_ytdlp) {
+    const binaryPath = resolveBundledBinaryPath('yt-dlp-exec', path.join('bin', ytDlpBinaryName));
+    _ytdlp = ytdlpExec.create(binaryPath);
+  }
+  return _ytdlp;
+}
+
+function getFfmpegPath() {
+  return resolveBundledBinaryPath('ffmpeg-static', ffmpegBinaryName);
+}
 
 class YtDlpEngine extends EventEmitter {
   constructor(downloadUrl, savePath, options = {}) {
@@ -30,11 +80,11 @@ class YtDlpEngine extends EventEmitter {
 
   async getFileInfo() {
     try {
-      const info = await ytdlp(this.url, { 
+      const info = await getYtDlp()(this.url, { 
         dumpJson: true, 
         noWarnings: true,
         format: this.formatId,
-        ffmpegLocation: ffmpegPath
+        ffmpegLocation: getFfmpegPath()
       });
       this.fileName = `${info.title.replace(/[\\/:*?"<>|]/g, '')}.${info.ext}`;
       
@@ -44,10 +94,23 @@ class YtDlpEngine extends EventEmitter {
       }
       this.fileSize = totalSize;
       
-      // If we don't have a savePath or it's a default generic one, update it
-      if (!this.savePath || this.savePath.endsWith('download')) {
-        const dir = this.savePath ? path.dirname(this.savePath) : require('os').homedir() + '\\Downloads';
+      // Ensure savePath is robust
+      if (!this.savePath) {
+        // Fallback to a temp location or something, but usually DownloadManager provides this.
+        // If really nothing, use a generic video name in home dir
+        this.savePath = path.join(require('os').homedir(), this.fileName);
+      }
+
+      const basename = path.basename(this.savePath);
+      const isDefaultGeneric = basename === 'download' || basename === 'video';
+      const hasExtension = path.extname(basename) !== '';
+      
+      if (isDefaultGeneric) {
+        const dir = path.dirname(this.savePath);
         this.savePath = path.join(dir, this.fileName);
+      } else if (!hasExtension) {
+        // If user provided a custom name but no extension, add it from metadata
+        this.savePath = `${this.savePath}.${info.ext}`;
       }
       
       return {
@@ -57,7 +120,7 @@ class YtDlpEngine extends EventEmitter {
         mimeType: this.mimeType,
       };
     } catch (err) {
-      throw new Error('Failed to resolve video: ' + err.message.split('\n')[0]);
+      throw new Error('Failed to resolve video: ' + (err.message || '').split('\n')[0]);
     }
   }
 
@@ -69,18 +132,24 @@ class YtDlpEngine extends EventEmitter {
         await this.getFileInfo();
       }
       
+      // Ensure the download directory exists
+      const dir = path.dirname(this.savePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      
       this.status = 'downloading';
       this.error = null;
       this.emit('start', this.getState());
       
       this._startProgressTimer();
       
-      this.subprocess = ytdlp.exec(this.url, {
+      this.subprocess = getYtDlp().exec(this.url, {
         output: this.savePath,
         format: this.formatId,
         newline: true, // Output progress on new lines
         noWarnings: true,
-        ffmpegLocation: ffmpegPath
+        ffmpegLocation: getFfmpegPath()
       });
 
       this.subprocess.stdout.on('data', (chunk) => this._parseProgress(chunk.toString()));

@@ -10,8 +10,14 @@
 - **Universal Browser Interception**: Intercepts all browser downloads via a dedicated Chrome extension.
 - **Smart Media Capture**: Automatically detects streaming videos (YouTube, Twitter, TikTok, etc.) and offers resolution selection.
 - **Automatic Muxing**: Seamlessly merges high-quality video and audio streams using FFmpeg.
-- **Universal Extension Interceptor**: The browser extension bypasses default browser downloaders to provide deep integration.
+- **Universal Extension Interceptor**: The browser extension routes supported downloads into TurboDM for integrated handling.
 - **Smart Filename Extraction**: Prioritizes `Content-Disposition` headers and URL decoding to ensure files retain their original names.
+
+## Legal & Responsible Use
+
+- Use TurboDM only for content you own or are authorized to download.
+- Users are responsible for compliance with applicable copyright law and platform terms.
+- TurboDM is a general-purpose download tool and is not intended for unlawful use.
 
 ## 🛠️ Built With
 
@@ -26,7 +32,7 @@
 To install TurboDM on your device:
 
 1. Download the latest installer from the [Releases](https://github.com/yourusername/turbodm/releases) page (if hosted).
-2. Run `TurboDM Setup 1.0.0.exe`.
+2. Run `TurboDM Setup 1.0.1.exe`.
 3. Follow the setup wizard to create a desktop shortcut.
 
 ### Browser Integration
@@ -68,7 +74,9 @@ npm run build
 
 ## 📜 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see [LICENSE](LICENSE).
+
+Third-party dependencies are subject to their own terms - see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
 *Created with ❤️ by TurboDM*

@@ -1,6 +1,6 @@
 {
   "name": "turbo-download-manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "High-end Internet Download Manager with 16-connection parallel downloading",
   "main": "main.js",
   "scripts": {
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "ffmpeg-static": "^5.3.0",
+    "jimp": "^1.6.1",
     "mime-types": "^3.0.2",
     "png-to-ico": "^3.0.1",
     "yt-dlp-exec": "^1.0.2"
@@ -46,6 +47,10 @@
         "from": "browser-extension",
         "to": "browser-extension"
       }
+    ],
+    "asarUnpack": [
+      "node_modules/yt-dlp-exec/**",
+      "node_modules/ffmpeg-static/**"
     ],
     "win": {
       "target": [

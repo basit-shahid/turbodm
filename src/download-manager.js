@@ -133,9 +133,12 @@ class DownloadManager extends EventEmitter {
     // Get file info first
     try {
       const info = await engine.getFileInfo();
-      // Update savePath with correct filename
+      // Use engine's updated savePath and fileName (which might have extensions now)
+      engine.fileName = engine.fileName || info.fileName;
+      engine.savePath = engine.savePath; // Sync if engine modified it internally (like YtDlpEngine does)
+      
+      // If user didn't provide a custom name, ensure we use the official one
       if (info.fileName && !options.fileName) {
-        engine.fileName = info.fileName;
         engine.savePath = path.join(
           options.downloadDir || this.defaultDownloadDir,
           info.fileName

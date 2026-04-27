@@ -252,6 +252,12 @@ class DownloadEngine extends EventEmitter {
         await this.getFileInfo();
       }
 
+      // Ensure the save directory exists
+      const saveDir = path.dirname(this.savePath);
+      if (!fs.existsSync(saveDir)) {
+        fs.mkdirSync(saveDir, { recursive: true });
+      }
+
       this.status = 'downloading';
       this.error = null;
       this.startTime = Date.now();
@@ -439,6 +445,9 @@ class DownloadEngine extends EventEmitter {
 
       const headers = { 'User-Agent': 'TurboDM/1.0' };
       const expectedChunkSize = Number.isFinite(chunk.end) ? (chunk.end - chunk.start + 1) : Infinity;
+      let intentionallyStoppedAtLimit = false;
+      let streamFinalized = false;
+      let finalizeChunk = null;
 
       if (this.supportsRange) {
         this.connectionMode = 'parallel';
@@ -512,18 +521,17 @@ class DownloadEngine extends EventEmitter {
         const flags = chunk.downloaded > 0 ? 'a' : 'w';
         const writeStream = fs.createWriteStream(chunk.tempFile, { flags });
 
-        res.on('data', (data) => {
-          if (this.status === 'paused' || this.status === 'cancelled') {
-            res.destroy();
-            writeStream.end();
-            return;
-          }
-          writeStream.write(data);
-          chunk.downloaded += data.length;
-        });
+        finalizeChunk = (err = null) => {
+          if (streamFinalized) return;
+          streamFinalized = true;
 
-        res.on('end', () => {
           writeStream.end(() => {
+            if (err) {
+              chunk.status = 'failed';
+              reject(err);
+              return;
+            }
+
             if (this.supportsRange && Number.isFinite(expectedChunkSize) && chunk.downloaded < expectedChunkSize) {
               if (attempt < this.retryAttempts && this.status === 'downloading') {
                 setTimeout(() => {
@@ -531,12 +539,13 @@ class DownloadEngine extends EventEmitter {
                 }, this.retryDelay * (attempt + 1));
                 return;
               }
+
               chunk.status = 'failed';
               reject(new Error(`Incomplete chunk ${chunk.index}`));
               return;
             }
 
-            if (this.supportsRange && Number.isFinite(expectedChunkSize)) {
+            if (Number.isFinite(expectedChunkSize)) {
               chunk.downloaded = Math.min(chunk.downloaded, expectedChunkSize);
             }
 
@@ -545,9 +554,53 @@ class DownloadEngine extends EventEmitter {
             }
             resolve();
           });
+        };
+
+        res.on('data', (data) => {
+          if (this.status === 'paused' || this.status === 'cancelled') {
+            res.destroy();
+            writeStream.end();
+            return;
+          }
+
+          let payload = data;
+          if (Number.isFinite(expectedChunkSize)) {
+            const remaining = expectedChunkSize - chunk.downloaded;
+            if (remaining <= 0) {
+              intentionallyStoppedAtLimit = true;
+              req.destroy();
+              finalizeChunk();
+              return;
+            }
+
+            if (data.length > remaining) {
+              payload = data.subarray(0, remaining);
+              intentionallyStoppedAtLimit = true;
+            }
+          }
+
+          if (payload.length > 0) {
+            writeStream.write(payload);
+            chunk.downloaded += payload.length;
+          }
+
+          if (intentionallyStoppedAtLimit && Number.isFinite(expectedChunkSize) && chunk.downloaded >= expectedChunkSize) {
+            req.destroy();
+            finalizeChunk();
+          }
+        });
+
+        res.on('end', () => {
+          finalizeChunk();
         });
 
         res.on('error', (err) => {
+          if (intentionallyStoppedAtLimit) {
+            finalizeChunk();
+            return;
+          }
+
+          if (streamFinalized) return;
           writeStream.end();
           if (attempt < this.retryAttempts && this.status === 'downloading') {
             setTimeout(() => {
@@ -563,6 +616,12 @@ class DownloadEngine extends EventEmitter {
       });
 
       req.on('error', (err) => {
+        if (intentionallyStoppedAtLimit) {
+          finalizeChunk();
+          return;
+        }
+
+        if (streamFinalized) return;
         if (attempt < this.retryAttempts && this.status === 'downloading') {
           setTimeout(() => {
             this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
@@ -591,6 +650,12 @@ class DownloadEngine extends EventEmitter {
 
   async _mergeChunks() {
     return new Promise((resolve, reject) => {
+      // Ensure the save directory exists
+      const saveDir = path.dirname(this.savePath);
+      if (!fs.existsSync(saveDir)) {
+        fs.mkdirSync(saveDir, { recursive: true });
+      }
+
       const writeStream = fs.createWriteStream(this.savePath);
 
       const mergeNext = (index) => {

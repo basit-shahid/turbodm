@@ -465,6 +465,7 @@ async function startDownload() {
   const url = $inputUrl.value.trim();
   if (!url) return;
 
+  const settings = await window.tdm.getSettings();
   const options = {
     fileName: $inputFilename.value.trim() || undefined,
     connections: parseInt($inputConnections.value, 10) || 16,
@@ -472,6 +473,7 @@ async function startDownload() {
     formatId: document.getElementById('group-quality').style.display !== 'none' 
               ? document.getElementById('input-quality').value 
               : undefined,
+    downloadDir: settings.downloadDir || undefined,
   };
 
   hideAddModal();

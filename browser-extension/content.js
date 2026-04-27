@@ -1,11 +1,113 @@
-// Set up a mutation observer to seamlessly catch new video players
+const TURBODM_API = 'http://127.0.0.1:10101/download';
+const SKIP_PATTERNS = [
+  /^blob:/i,
+  /^data:/i,
+  /^file:/i,
+  /^chrome/i,
+  /^edge/i,
+  /^about:/i,
+  /^chrome-extension:/i,
+  /^moz-extension:/i,
+];
+
+const DOWNLOADABLE_EXTENSIONS = new Set([
+  'zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz',
+  'exe', 'msi', 'dmg', 'pkg', 'deb', 'rpm', 'apk',
+  'iso', 'img',
+  'pdf', 'epub',
+  'mp4', 'mkv', 'avi', 'mov', 'wmv', 'webm', 'm4v',
+  'mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg',
+  'jpg', 'jpeg', 'png', 'gif', 'webp', 'svg',
+  'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'csv',
+]);
+
+function isSkippableUrl(url) {
+  return !url || SKIP_PATTERNS.some((pattern) => pattern.test(url));
+}
+
+function isLikelyDirectDownloadLink(anchor) {
+  if (!anchor || !anchor.href) return false;
+  if (anchor.hasAttribute('download')) return true;
+  if (isSkippableUrl(anchor.href)) return false;
+
+  try {
+    const parsed = new URL(anchor.href, window.location.href);
+    const pathname = decodeURIComponent(parsed.pathname || '').toLowerCase();
+    const base = pathname.split('/').pop() || '';
+    const dot = base.lastIndexOf('.');
+    if (dot === -1) return false;
+
+    const ext = base.slice(dot + 1);
+    return DOWNLOADABLE_EXTENSIONS.has(ext);
+  } catch {
+    return false;
+  }
+}
+
+function routeUrlViaBackground(url) {
+  if (isSkippableUrl(url)) return;
+  try {
+    chrome.runtime.sendMessage({ type: 'turbodm-route-download', url });
+  } catch {
+    // Fallback to direct local API call if background worker is unavailable.
+    sendToTurboDM(url);
+  }
+}
+
+document.addEventListener('click', (event) => {
+  // Respect modified clicks and non-primary buttons.
+  if (event.defaultPrevented) return;
+  if (event.button !== 0) return;
+  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+  const anchor = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+  if (!anchor) return;
+  if (!isLikelyDirectDownloadLink(anchor)) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+  routeUrlViaBackground(anchor.href);
+}, true);
+
+// Set up a mutation observer to catch newly added video players without rescanning too aggressively.
+let scanScheduled = false;
 const observer = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
     if (mutation.addedNodes.length) {
-      scanForVideos();
+      scheduleScan();
+      break;
     }
   }
 });
+
+function scheduleScan() {
+  if (scanScheduled) return;
+  scanScheduled = true;
+  requestAnimationFrame(() => {
+    scanScheduled = false;
+    scanForVideos();
+  });
+}
+
+function sendToTurboDM(url) {
+  if (isSkippableUrl(url)) return;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+
+  fetch(TURBODM_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+    signal: controller.signal,
+  })
+    .catch(() => {
+      console.error('TurboDM server missing.');
+    })
+    .finally(() => {
+      clearTimeout(timeout);
+    });
+}
 
 function scanForVideos() {
   const videos = document.querySelectorAll('video');
@@ -25,6 +127,7 @@ function createOverlayButton(videoElement) {
   // Try to find a relative container to position the button on top of the video
   // Some sites use wrappers, some just plop a video down. We append to parent.
   let container = videoElement.parentElement;
+  if (!container) return;
   
   // If the container is static, we must make sure positioning works (or overlay directly on body)
   // Usually appending to the direct parent works for standard players
@@ -41,15 +144,13 @@ function createOverlayButton(videoElement) {
     e.stopPropagation();
     // Default to the page URL for streaming sites (YT, Twitch), as yt-dlp prefers page URL
     // If it's a raw video tag on a random site without yt-dlp support, use its src.
-    const urlToSend = (window.location.hostname.includes('youtube') || window.location.hostname.includes('twitter')) 
+    const host = window.location.hostname.toLowerCase();
+    const preferPageUrl = ['youtube', 'twitter', 'x.com', 'tiktok', 'vimeo', 'twitch'].some(domain => host.includes(domain));
+    const urlToSend = preferPageUrl
       ? window.location.href 
       : (videoElement.src || window.location.href);
 
-    fetch('http://127.0.0.1:10101/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: urlToSend })
-    }).catch(e => console.error('TurboDM server missing.'));
+    sendToTurboDM(urlToSend);
   };
 
   let hideTimer = null;
@@ -99,3 +200,7 @@ function createOverlayButton(videoElement) {
 // Initial scan and observer kick off
 scanForVideos();
 observer.observe(document.body, { childList: true, subtree: true });
+
+window.addEventListener('pagehide', () => {
+  observer.disconnect();
+});
