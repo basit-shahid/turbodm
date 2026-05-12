@@ -8,7 +8,9 @@
     "dev": "electron . --dev",
     "build": "electron-builder --win",
     "rebuild": "electron-builder --win --dir",
-    "test:parallel-fallback": "node scripts/test-parallel-fallback.js"
+    "test:parallel-fallback": "node scripts/test-parallel-fallback.js",
+    "test:integrity": "node scripts/test-large-chunk-integrity.js",
+    "test:pause-resume-integrity": "node scripts/test-pause-resume-integrity.js"
   },
   "keywords": [
     "download",
@@ -46,6 +48,14 @@
       {
         "from": "browser-extension",
         "to": "browser-extension"
+      },
+      {
+        "from": "build/extension-setup.bat",
+        "to": "../extension-setup.bat"
+      },
+      {
+        "from": "build/EXTENSION_SETUP.md",
+        "to": "../EXTENSION_SETUP.md"
       }
     ],
     "asarUnpack": [
@@ -66,12 +76,13 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "TurboDM",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico",
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "TurboDM"
+      "runAfterFinish": true
     }
   }
 }

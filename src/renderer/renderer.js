@@ -5,6 +5,15 @@ let toastTimeout = null;
 let currentFilter = 'all';
 let searchQuery = '';
 let lastAnalyzedInfo = null;
+let nextAddedOrder = 1;
+
+function getAddedRank(download) {
+  return Number(download.createdAt)
+    || Number(download.addedAt)
+    || Number(download.startTime)
+    || Number(download.__addedOrder)
+    || 0;
+}
 
 // ===== DOM REFS =====
 const $downloadList = document.getElementById('download-list');
@@ -67,9 +76,9 @@ function renderDownloadItem(dl) {
   const isPaused = dl.status === 'paused';
   const isCompleted = dl.status === 'completed';
   const isFailed = dl.status === 'failed';
-  const currentMode = (dl.modePreference === 'parallel' || dl.modePreference === 'single')
-    ? dl.modePreference
-    : (dl.connectionMode === 'parallel' ? 'parallel' : 'single');
+  const currentMode = (dl.connectionMode === 'parallel' || dl.connectionMode === 'single')
+    ? dl.connectionMode
+    : ((dl.modePreference === 'parallel' || dl.modePreference === 'single') ? dl.modePreference : 'single');
   const modeLabel = currentMode === 'parallel' ? 'Parallel' : 'Series';
   const canSwitchMode = !dl.isStreaming && !isCompleted && dl.status !== 'cancelled';
   const nextMode = currentMode === 'parallel' ? 'single' : 'parallel';
@@ -144,7 +153,7 @@ function renderDownloadItem(dl) {
       <span class="speed-indicator">${formatSpeed(dl.speed)}</span>
       <span class="connections-badge">
         <svg width="8" height="8" viewBox="0 0 24 24" fill="none"><path d="M12 2L12 18" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
-        ${dl.activeConnections || 0}/${dl.connections || 16}
+        ${dl.activeConnections || 0}/${dl.connections || 32}
       </span>`;
   }
   if (isFailed && dl.error) {
@@ -222,9 +231,8 @@ function renderDownloads() {
 
   $emptyState.style.display = 'none';
 
-  // Sort: active first, then paused, pending, failed, completed
-  const statusOrder = { downloading: 0, paused: 1, pending: 2, failed: 3, completed: 4, cancelled: 5 };
-  const sorted = [...filtered].sort((a, b) => (statusOrder[a.status] || 9) - (statusOrder[b.status] || 9));
+  // Sort: latest downloads first
+  const sorted = [...filtered].sort((a, b) => getAddedRank(b) - getAddedRank(a));
 
   $downloadList.innerHTML = sorted.map(renderDownloadItem).join('');
   updateStatusBar();
@@ -233,8 +241,10 @@ function renderDownloads() {
 function updateDownloadInPlace(state) {
   const idx = downloads.findIndex(d => d.id === state.id);
   if (idx >= 0) {
+    state.__addedOrder = downloads[idx].__addedOrder || nextAddedOrder++;
     downloads[idx] = state;
   } else {
+    state.__addedOrder = state.__addedOrder || nextAddedOrder++;
     downloads.push(state);
   }
 
@@ -468,7 +478,7 @@ async function startDownload() {
   const settings = await window.tdm.getSettings();
   const options = {
     fileName: $inputFilename.value.trim() || undefined,
-    connections: parseInt($inputConnections.value, 10) || 16,
+    connections: parseInt($inputConnections.value, 10) || 32,
     modePreference: document.getElementById('input-transfer-mode').value || 'auto',
     formatId: document.getElementById('group-quality').style.display !== 'none' 
               ? document.getElementById('input-quality').value 
@@ -499,7 +509,7 @@ function updateAnalyzedConnectionInfo(info) {
   }
 
   document.getElementById('info-connections').textContent = supportsParallel
-    ? ($inputConnections.value || '16')
+    ? ($inputConnections.value || '32')
     : '1 (no range support)';
 }
 
@@ -507,8 +517,8 @@ function updateAnalyzedConnectionInfo(info) {
 async function showSettings() {
   const settings = await window.tdm.getSettings();
   document.getElementById('settings-dir').value = settings.downloadDir || '';
-  document.getElementById('settings-concurrent').value = settings.maxConcurrent || 3;
-  document.getElementById('settings-connections').value = settings.defaultConnections || 16;
+  document.getElementById('settings-concurrent').value = settings.maxConcurrent || 5;
+  document.getElementById('settings-connections').value = settings.defaultConnections || 64;
   $modalSettings.style.display = '';
 }
 
@@ -646,5 +656,9 @@ const unsubClipboard = window.tdm.onClipboardUrl((url) => {
 // ===== INIT =====
 (async () => {
   downloads = await window.tdm.getAllDownloads();
+  downloads.forEach((d, i) => {
+    d.__addedOrder = d.__addedOrder || (i + 1);
+  });
+  nextAddedOrder = downloads.length + 1;
   renderDownloads();
 })();

@@ -14,7 +14,7 @@ class DownloadEngine extends EventEmitter {
     this.connections = options.connections || 16;
     this.retryAttempts = options.retryAttempts || 3;
     this.retryDelay = options.retryDelay || 2000;
-    this.minChunkSize = options.minChunkSize || (2 * 1024 * 1024); // 2 MB per chunk minimum
+    this.minChunkSize = options.minChunkSize || (1 * 1024 * 1024); // 1 MB per chunk minimum
     this.rangeProbeTimeout = options.rangeProbeTimeout || 10000;
     this.modePreference = options.modePreference || 'auto'; // auto, parallel, single
 
@@ -44,6 +44,67 @@ class DownloadEngine extends EventEmitter {
     this.redirectedUrl = null;
     this.transportNotice = '';
     this.connectionMode = 'single';
+    this.httpAgent = null;
+    this.httpsAgent = null;
+  }
+
+  _getAgent(protocol) {
+    const maxSockets = Math.max(4, this.connections || 4);
+
+    if (protocol === 'https:') {
+      if (!this.httpsAgent) {
+        this.httpsAgent = new https.Agent({
+          keepAlive: true,
+          maxSockets,
+          maxFreeSockets: 2,
+          keepAliveMsecs: 1000,
+        });
+      } else {
+        this.httpsAgent.maxSockets = maxSockets;
+      }
+
+      return this.httpsAgent;
+    }
+
+    if (!this.httpAgent) {
+      this.httpAgent = new http.Agent({
+        keepAlive: true,
+        maxSockets,
+        maxFreeSockets: 2,
+        keepAliveMsecs: 1000,
+      });
+    } else {
+      this.httpAgent.maxSockets = maxSockets;
+    }
+
+    return this.httpAgent;
+  }
+
+  _getDefaultHeaders(useBrowserUA = false) {
+    const userAgent = useBrowserUA
+      ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      : 'TurboDM/1.0';
+    return {
+      'User-Agent': userAgent,
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept-Encoding': 'gzip, deflate, br',
+      'DNT': '1',
+      'Connection': 'keep-alive',
+      'Upgrade-Insecure-Requests': '1',
+    };
+  }
+
+  _destroyAgents() {
+    if (this.httpAgent) {
+      this.httpAgent.destroy();
+      this.httpAgent = null;
+    }
+
+    if (this.httpsAgent) {
+      this.httpsAgent.destroy();
+      this.httpsAgent = null;
+    }
   }
 
   _setTransportNotice(message) {
@@ -72,9 +133,8 @@ class DownloadEngine extends EventEmitter {
           port: parsedUrl.port,
           path: parsedUrl.pathname + parsedUrl.search,
           method: 'HEAD',
-          headers: {
-            'User-Agent': 'TurboDM/1.0',
-          },
+          headers: this._getDefaultHeaders(),
+          agent: this._getAgent(parsedUrl.protocol),
           timeout: this.rangeProbeTimeout,
         };
 
@@ -83,6 +143,39 @@ class DownloadEngine extends EventEmitter {
             const redirectUrl = new URL(res.headers.location, requestUrl).href;
             this.redirectedUrl = redirectUrl;
             makeRequest(redirectUrl, redirectCount + 1);
+            return;
+          }
+
+          if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+            const redirectUrl = new URL(res.headers.location, requestUrl).href;
+            this.redirectedUrl = redirectUrl;
+            makeRequest(redirectUrl, redirectCount + 1);
+            return;
+          }
+
+          if (res.statusCode === 403 && redirectCount === 0) {
+            // Retry 403 with browser UA
+            res.destroy();
+            const retryUrl = requestUrl;
+            const retryReqOptions = {
+              hostname: parsedUrl.hostname,
+              port: parsedUrl.port,
+              path: parsedUrl.pathname + parsedUrl.search,
+              method: 'HEAD',
+              headers: this._getDefaultHeaders(true),
+              agent: this._getAgent(parsedUrl.protocol),
+              timeout: this.rangeProbeTimeout,
+            };
+            const retryReq = client.request(retryReqOptions, (retryRes) => {
+              if (retryRes.statusCode >= 200 && retryRes.statusCode < 300) {
+                // Retry succeeded with browser UA
+                req.emit('retry-success');
+                return;
+              }
+              reject(new Error(`HTTP ${retryRes.statusCode}: ${retryRes.statusMessage}`));
+            });
+            retryReq.on('error', (err) => reject(err));
+            retryReq.end();
             return;
           }
 
@@ -189,15 +282,15 @@ class DownloadEngine extends EventEmitter {
 
         const parsedUrl = new URL(rangeUrl);
         const client = parsedUrl.protocol === 'https:' ? https : http;
+        const rangeHeaders = this._getDefaultHeaders();
+        rangeHeaders['Range'] = 'bytes=0-0';
         const reqOptions = {
           hostname: parsedUrl.hostname,
           port: parsedUrl.port,
           path: parsedUrl.pathname + parsedUrl.search,
           method: 'GET',
-          headers: {
-            'User-Agent': 'TurboDM/1.0',
-            'Range': 'bytes=0-0',
-          },
+          headers: rangeHeaders,
+          agent: this._getAgent(parsedUrl.protocol),
           timeout: this.rangeProbeTimeout,
         };
 
@@ -295,10 +388,6 @@ class DownloadEngine extends EventEmitter {
         await this._downloadAllChunks();
       } catch (err) {
         if (this._isRangeFallbackError(err) && this.status === 'downloading') {
-          if (this.modePreference === 'parallel') {
-            this._setTransportNotice('Parallel mode is forced. Switch to series mode if this server keeps failing range chunks.');
-            throw err;
-          }
           await this._fallbackToSingleConnection();
         } else {
           throw err;
@@ -307,6 +396,7 @@ class DownloadEngine extends EventEmitter {
 
       if (this.status === 'downloading') {
         await this._mergeChunks();
+        this._validateCompletedOutput();
         this.status = 'completed';
         this._stopSpeedCalculation();
         this.emit('complete', this.getState());
@@ -356,13 +446,31 @@ class DownloadEngine extends EventEmitter {
     return !!(err && err.code === 'RANGE_NOT_RELIABLE');
   }
 
+  _parseContentRangeHeader(contentRange) {
+    const match = /^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i.exec(contentRange || '');
+    if (!match) return null;
+
+    const start = parseInt(match[1], 10);
+    const end = parseInt(match[2], 10);
+    const total = match[3] === '*' ? '*' : parseInt(match[3], 10);
+
+    if (Number.isNaN(start) || Number.isNaN(end) || start > end) {
+      return null;
+    }
+
+    if (total !== '*' && (Number.isNaN(total) || total <= 0 || end >= total)) {
+      return null;
+    }
+
+    return { start, end, total };
+  }
+
   async _fallbackToSingleConnection() {
-    this.activeRequests.forEach(({ req, res, writeStream }) => {
+    this.activeRequests.forEach(({ req, res }) => {
       try {
         if (res) res.destroy();
         if (req) req.destroy();
-        if (writeStream) writeStream.end();
-      } catch (e) { /* ignore cleanup errors */ }
+      } catch (e) { /* ignore */ }
     });
     this.activeRequests = [];
 
@@ -376,6 +484,7 @@ class DownloadEngine extends EventEmitter {
     this.supportsRange = false;
     this.connections = 1;
     this.connectionMode = 'single';
+    this.modePreference = 'single';
     this._setTransportNotice('Parallel range mode was unstable on this server. Switched to single connection automatically.');
     this.chunks = [{
       index: 0,
@@ -401,11 +510,10 @@ class DownloadEngine extends EventEmitter {
       this.pause();
     }
 
-    this.activeRequests.forEach(({ req, res, writeStream }) => {
+    this.activeRequests.forEach(({ req, res }) => {
       try {
         if (res) res.destroy();
         if (req) req.destroy();
-        if (writeStream) writeStream.end();
       } catch (e) { /* ignore cleanup errors */ }
     });
     this.activeRequests = [];
@@ -424,6 +532,19 @@ class DownloadEngine extends EventEmitter {
     return this.getState();
   }
 
+  _validateCompletedOutput() {
+    if (!fs.existsSync(this.savePath)) {
+      throw new Error('Final output file is missing after merge');
+    }
+
+    if (this.fileSize > 0) {
+      const finalSize = fs.statSync(this.savePath).size;
+      if (finalSize !== this.fileSize) {
+        throw new Error(`Final file size mismatch (${finalSize}/${this.fileSize})`);
+      }
+    }
+  }
+
   async _downloadAllChunks() {
     const promises = this.chunks
       .filter(c => c.status !== 'completed')
@@ -439,15 +560,70 @@ class DownloadEngine extends EventEmitter {
       }
 
       chunk.status = 'downloading';
+
+      if (!this.supportsRange && chunk.downloaded > 0) {
+        chunk.downloaded = 0;
+        try {
+          if (fs.existsSync(chunk.tempFile)) {
+            fs.rmSync(chunk.tempFile, { force: true });
+          }
+        } catch (e) { /* ignore cleanup errors */ }
+      }
+
       const downloadUrl = this.redirectedUrl || this.url;
       const parsedUrl = new URL(downloadUrl);
       const client = parsedUrl.protocol === 'https:' ? https : http;
 
-      const headers = { 'User-Agent': 'TurboDM/1.0' };
+      const headers = this._getDefaultHeaders(attempt > 0);
       const expectedChunkSize = Number.isFinite(chunk.end) ? (chunk.end - chunk.start + 1) : Infinity;
+      let requestedStartByte = chunk.start;
       let intentionallyStoppedAtLimit = false;
       let streamFinalized = false;
       let finalizeChunk = null;
+      let writeStream = null;
+      let handleError = (err) => {
+        if (intentionallyStoppedAtLimit) {
+          if (finalizeChunk) finalizeChunk();
+          return;
+        }
+        if (streamFinalized) return;
+        streamFinalized = true;
+
+        const invokeRetryOrReject = () => {
+          if (this.status === 'paused' || this.status === 'cancelled') {
+            resolve();
+            return;
+          }
+          if (attempt < this.retryAttempts && this.status === 'downloading') {
+            if (!this.supportsRange) {
+              chunk.downloaded = 0;
+              try { if (fs.existsSync(chunk.tempFile)) fs.rmSync(chunk.tempFile, { force: true }); } catch (e) {}
+            }
+            setTimeout(() => {
+              this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
+            }, this.retryDelay * (attempt + 1));
+          } else {
+            chunk.status = 'failed';
+            reject(err);
+          }
+        };
+
+        if (writeStream) {
+          writeStream.end(() => {
+            if (this.supportsRange && fs.existsSync(chunk.tempFile)) {
+              const diskSize = fs.statSync(chunk.tempFile).size;
+              if (chunk.downloaded > diskSize) {
+                chunk.downloaded = diskSize;
+              } else if (chunk.downloaded < diskSize) {
+                try { fs.truncateSync(chunk.tempFile, chunk.downloaded); } catch (e) {}
+              }
+            }
+            invokeRetryOrReject();
+          });
+        } else {
+          invokeRetryOrReject();
+        }
+      };
 
       if (this.supportsRange) {
         this.connectionMode = 'parallel';
@@ -458,15 +634,15 @@ class DownloadEngine extends EventEmitter {
           return;
         }
 
-        const startByte = chunk.start + chunk.downloaded;
-        if (startByte > chunk.end) {
+        requestedStartByte = chunk.start + chunk.downloaded;
+        if (requestedStartByte > chunk.end) {
           chunk.downloaded = expectedChunkSize;
           chunk.status = 'completed';
           resolve();
           return;
         }
 
-        headers['Range'] = `bytes=${startByte}-${chunk.end}`;
+        headers['Range'] = `bytes=${requestedStartByte}-${chunk.end}`;
       }
 
       const reqOptions = {
@@ -475,10 +651,19 @@ class DownloadEngine extends EventEmitter {
         path: parsedUrl.pathname + parsedUrl.search,
         method: 'GET',
         headers,
+        agent: this._getAgent(parsedUrl.protocol),
         timeout: 30000,
       };
 
       const req = client.request(reqOptions, (res) => {
+        // Optimize socket for maximum throughput in all modes
+        if (res.socket) {
+          res.socket.setNoDelay(true);
+          if (res.socket.setReceiveBufferSize) {
+            res.socket.setReceiveBufferSize(2 * 1024 * 1024); // 2 MB receive buffer
+          }
+        }
+
         if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
           this.redirectedUrl = new URL(res.headers.location, downloadUrl).href;
           this._downloadChunk(chunk, attempt).then(resolve).catch(reject);
@@ -503,37 +688,84 @@ class DownloadEngine extends EventEmitter {
           return;
         }
 
+        if (this.supportsRange && Number.isFinite(chunk.end)) {
+          const parsedContentRange = this._parseContentRangeHeader(res.headers['content-range']);
+          if (!parsedContentRange) {
+            res.resume();
+            reject(Object.assign(new Error(`Invalid Content-Range for chunk ${chunk.index}`), { code: 'RANGE_NOT_RELIABLE' }));
+            return;
+          }
+
+          const expectedEnd = chunk.end;
+          if (parsedContentRange.start !== requestedStartByte || parsedContentRange.end > expectedEnd) {
+            res.resume();
+            reject(Object.assign(new Error(`Unexpected Content-Range for chunk ${chunk.index}`), { code: 'RANGE_NOT_RELIABLE' }));
+            return;
+          }
+        }
+
         if (res.statusCode >= 400) {
+          if (res.statusCode === 403 && attempt === 0) {
+            // Special case: retry 403 with browser User-Agent
+            res.resume();
+            headers['User-Agent'] = this._getDefaultHeaders(true)['User-Agent'];
+            this._downloadChunk(chunk, 1).then(resolve).catch(reject);
+            return;
+          }
+          
           if (attempt < this.retryAttempts) {
-            // Reset progress for this chunk if server doesn't support resuming
             if (!this.supportsRange) {
                chunk.downloaded = 0;
             }
+            res.resume();
             setTimeout(() => {
               this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
             }, this.retryDelay * (attempt + 1));
             return;
           }
+          res.resume();
           reject(new Error(`HTTP ${res.statusCode} for chunk ${chunk.index}`));
           return;
         }
 
-        const flags = chunk.downloaded > 0 ? 'a' : 'w';
-        const writeStream = fs.createWriteStream(chunk.tempFile, { flags });
+        const flags = (this.supportsRange && chunk.downloaded > 0) ? 'a' : 'w';
+        writeStream = fs.createWriteStream(chunk.tempFile, {
+          flags,
+          highWaterMark: 4 * 1024 * 1024,
+        });
+        writeStream.on('error', handleError);
 
         finalizeChunk = (err = null) => {
           if (streamFinalized) return;
           streamFinalized = true;
 
           writeStream.end(() => {
+            // Reconcile saved progress with actual on-disk file size to prevent size mismatch, after flush
+            if (this.supportsRange && fs.existsSync(chunk.tempFile)) {
+              const diskSize = fs.statSync(chunk.tempFile).size;
+              if (chunk.downloaded > diskSize) {
+                chunk.downloaded = diskSize; // Reverse any buffered writes not in disk
+              } else if (chunk.downloaded < diskSize) {
+                try { fs.truncateSync(chunk.tempFile, chunk.downloaded); } catch (e) {}
+              }
+            }
+
             if (err) {
               chunk.status = 'failed';
               reject(err);
               return;
             }
 
-            if (this.supportsRange && Number.isFinite(expectedChunkSize) && chunk.downloaded < expectedChunkSize) {
+            if (Number.isFinite(expectedChunkSize) && chunk.downloaded < expectedChunkSize) {
               if (attempt < this.retryAttempts && this.status === 'downloading') {
+                if (!this.supportsRange) {
+                  chunk.downloaded = 0;
+                  try {
+                    if (fs.existsSync(chunk.tempFile)) {
+                      fs.rmSync(chunk.tempFile, { force: true });
+                    }
+                  } catch (e) { /* ignore cleanup errors */ }
+                }
                 setTimeout(() => {
                   this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
                 }, this.retryDelay * (attempt + 1));
@@ -559,7 +791,6 @@ class DownloadEngine extends EventEmitter {
         res.on('data', (data) => {
           if (this.status === 'paused' || this.status === 'cancelled') {
             res.destroy();
-            writeStream.end();
             return;
           }
 
@@ -580,8 +811,19 @@ class DownloadEngine extends EventEmitter {
           }
 
           if (payload.length > 0) {
-            writeStream.write(payload);
+            const canContinue = writeStream.write(payload);
             chunk.downloaded += payload.length;
+
+            // Respect backpressure so large transfers do not overflow buffers
+            // and silently lose buffered data under heavy I/O pressure.
+            if (!canContinue) {
+              res.pause();
+              writeStream.once('drain', () => {
+                if (this.status === 'downloading') {
+                  res.resume();
+                }
+              });
+            }
           }
 
           if (intentionallyStoppedAtLimit && Number.isFinite(expectedChunkSize) && chunk.downloaded >= expectedChunkSize) {
@@ -591,56 +833,29 @@ class DownloadEngine extends EventEmitter {
         });
 
         res.on('end', () => {
-          finalizeChunk();
+          if (finalizeChunk) finalizeChunk();
         });
 
-        res.on('error', (err) => {
-          if (intentionallyStoppedAtLimit) {
-            finalizeChunk();
-            return;
-          }
+        res.on('error', handleError);
 
-          if (streamFinalized) return;
-          writeStream.end();
-          if (attempt < this.retryAttempts && this.status === 'downloading') {
-            setTimeout(() => {
-              this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
-            }, this.retryDelay * (attempt + 1));
-          } else {
-            chunk.status = 'failed';
-            reject(err);
-          }
-        });
-
-        this.activeRequests.push({ req, res, writeStream, chunk });
+        this.activeRequests.push({ req, res, chunk });
       });
 
-      req.on('error', (err) => {
-        if (intentionallyStoppedAtLimit) {
-          finalizeChunk();
-          return;
-        }
-
-        if (streamFinalized) return;
-        if (attempt < this.retryAttempts && this.status === 'downloading') {
-          setTimeout(() => {
-            this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
-          }, this.retryDelay * (attempt + 1));
-        } else {
-          chunk.status = 'failed';
-          reject(err);
-        }
-      });
+      req.on('error', handleError);
 
       req.on('timeout', () => {
         req.destroy();
-        if (attempt < this.retryAttempts && this.status === 'downloading') {
-          setTimeout(() => {
-            this._downloadChunk(chunk, attempt + 1).then(resolve).catch(reject);
-          }, this.retryDelay * (attempt + 1));
-        } else {
-          chunk.status = 'failed';
-          reject(new Error('Connection timed out'));
+        handleError(new Error('Connection timed out'));
+      });
+
+      // Tune socket for extreme throughput in all connection modes
+      req.on('socket', (socket) => {
+        socket.setNoDelay(true);
+        if (socket.setReceiveBufferSize) {
+          socket.setReceiveBufferSize(2 * 1024 * 1024);
+        }
+        if (socket.setSendBufferSize) {
+          socket.setSendBufferSize(2 * 1024 * 1024);
         }
       });
 
@@ -656,19 +871,46 @@ class DownloadEngine extends EventEmitter {
         fs.mkdirSync(saveDir, { recursive: true });
       }
 
+      const orderedChunks = [...this.chunks].sort((a, b) => {
+        if (a.start !== b.start) return a.start - b.start;
+        return a.index - b.index;
+      });
+
+      for (let i = 0; i < orderedChunks.length; i++) {
+        const chunk = orderedChunks[i];
+        if (!fs.existsSync(chunk.tempFile)) {
+          reject(new Error(`Missing chunk file ${chunk.index}`));
+          return;
+        }
+
+        if (Number.isFinite(chunk.end)) {
+          const expectedSize = chunk.end - chunk.start + 1;
+          const actualSize = fs.statSync(chunk.tempFile).size;
+          if (actualSize !== expectedSize) {
+            reject(new Error(`Chunk ${chunk.index} size mismatch (${actualSize}/${expectedSize})`));
+            return;
+          }
+        }
+
+        if (i > 0) {
+          const prev = orderedChunks[i - 1];
+          if (Number.isFinite(prev.end) && chunk.start !== prev.end + 1) {
+            reject(new Error(`Chunk sequence gap/overlap between ${prev.index} and ${chunk.index}`));
+            return;
+          }
+        }
+      }
+
       const writeStream = fs.createWriteStream(this.savePath);
+      writeStream.on('error', reject);
 
       const mergeNext = (index) => {
-        if (index >= this.chunks.length) {
+        if (index >= orderedChunks.length) {
           writeStream.end(resolve);
           return;
         }
 
-        const chunk = this.chunks[index];
-        if (!fs.existsSync(chunk.tempFile)) {
-          mergeNext(index + 1);
-          return;
-        }
+        const chunk = orderedChunks[index];
 
         const readStream = fs.createReadStream(chunk.tempFile);
         readStream.pipe(writeStream, { end: false });
@@ -684,11 +926,10 @@ class DownloadEngine extends EventEmitter {
     if (this.status !== 'downloading') return;
     this.status = 'paused';
     this._stopSpeedCalculation();
-    this.activeRequests.forEach(({ req, res, writeStream }) => {
+    this.activeRequests.forEach(({ req, res }) => {
       try {
         if (res) res.destroy();
         if (req) req.destroy();
-        if (writeStream) writeStream.end();
       } catch (e) { /* ignore cleanup errors */ }
     });
     this.activeRequests = [];
@@ -709,10 +950,6 @@ class DownloadEngine extends EventEmitter {
         await this._downloadAllChunks();
       } catch (err) {
         if (this._isRangeFallbackError(err) && this.status === 'downloading') {
-          if (this.modePreference === 'parallel') {
-            this._setTransportNotice('Parallel mode is forced. Switch to series mode if this server keeps failing range chunks.');
-            throw err;
-          }
           await this._fallbackToSingleConnection();
         } else {
           throw err;
@@ -721,6 +958,7 @@ class DownloadEngine extends EventEmitter {
 
       if (this.status === 'downloading') {
         await this._mergeChunks();
+        this._validateCompletedOutput();
         this.status = 'completed';
         this._stopSpeedCalculation();
         this.emit('complete', this.getState());
@@ -739,11 +977,10 @@ class DownloadEngine extends EventEmitter {
   cancel() {
     this.status = 'cancelled';
     this._stopSpeedCalculation();
-    this.activeRequests.forEach(({ req, res, writeStream }) => {
+    this.activeRequests.forEach(({ req, res }) => {
       try {
         if (res) res.destroy();
         if (req) req.destroy();
-        if (writeStream) writeStream.end();
       } catch (e) { /* ignore */ }
     });
     this.activeRequests = [];
@@ -798,6 +1035,7 @@ class DownloadEngine extends EventEmitter {
         fs.rmSync(this.tempDir, { recursive: true, force: true });
       }
     } catch (e) { /* ignore */ }
+    this._destroyAgents();
   }
 
   getState() {

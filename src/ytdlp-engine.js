@@ -78,6 +78,26 @@ class YtDlpEngine extends EventEmitter {
     this._progressInterval = null;
   }
 
+  _validateCompletedOutput() {
+    if (!this.savePath || !fs.existsSync(this.savePath)) {
+      throw new Error('Final output file is missing after download');
+    }
+
+    const stats = fs.statSync(this.savePath);
+    if (!stats.isFile() || stats.size <= 0) {
+      throw new Error('Downloaded file is empty or invalid');
+    }
+
+    // For stream muxing, exact size can differ from pre-estimates. We only
+    // reject files that are clearly truncated compared to known metadata size.
+    if (this.fileSize > 0) {
+      const minExpectedSize = Math.floor(this.fileSize * 0.95);
+      if (stats.size < minExpectedSize) {
+        throw new Error(`Downloaded file appears incomplete (${stats.size}/${this.fileSize})`);
+      }
+    }
+  }
+
   async getFileInfo() {
     try {
       const info = await getYtDlp()(this.url, { 
@@ -149,6 +169,11 @@ class YtDlpEngine extends EventEmitter {
         format: this.formatId,
         newline: true, // Output progress on new lines
         noWarnings: true,
+        continue: true,
+        retries: 10,
+        fragmentRetries: 10,
+        concurrentFragments: 4,
+        abortOnUnavailableFragments: true,
         ffmpegLocation: getFfmpegPath()
       });
 
@@ -161,9 +186,10 @@ class YtDlpEngine extends EventEmitter {
       try {
         await this.subprocess;
         if (this.status === 'downloading') {
+          this._validateCompletedOutput();
           this.status = 'completed';
           this.progress = 100;
-          this.downloadedBytes = this.fileSize;
+          this.downloadedBytes = fs.statSync(this.savePath).size;
           this._stopProgressTimer();
           this.emit('complete', this.getState());
         }

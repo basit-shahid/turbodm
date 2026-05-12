@@ -4,12 +4,45 @@ const YtDlpEngine = require('./ytdlp-engine');
 const Store = require('./store');
 const path = require('path');
 
+const CATEGORY_EXTENSION_MAP = {
+  compressed: new Set(['zip', 'rar', '7z', 'tar', 'gz', 'bz2', 'xz', 'iso', 'tgz', 'tbz2', 'txz', 'cab', 'lz', 'lzma', 'zst']),
+  video: new Set(['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm', 'm4v', 'mpg', 'mpeg', 'ts', '3gp', '3g2', 'ogv', 'f4v', 'm2ts']),
+  music: new Set(['mp3', 'flac', 'aac', 'ogg', 'wav', 'wma', 'm4a', 'opus', 'alac', 'aif', 'aiff', 'mid', 'midi']),
+  pictures: new Set(['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'tiff', 'tif', 'psd', 'ai', 'eps', 'heic', 'heif', 'raw', 'ico']),
+  documents: new Set(['pdf', 'doc', 'docx', 'docm', 'dot', 'dotx', 'xls', 'xlsx', 'xlsm', 'ppt', 'pptx', 'pptm', 'txt', 'rtf', 'odt', 'ods', 'odp', 'csv', 'tsv', 'md', 'markdown', 'epub', 'mobi', 'azw', 'azw3', 'html', 'htm', 'xml', 'json', 'yaml', 'yml', 'log']),
+  program: new Set(['exe', 'msi', 'dmg', 'pkg', 'deb', 'rpm', 'apk', 'bin', 'appimage', 'jar', 'bat', 'sh', 'cmd', 'ps1', 'ipa', 'xpi', 'crx']),
+};
+
+function getDownloadCategory(fileName) {
+  const normalizedName = (fileName || '').toLowerCase();
+
+  if (normalizedName.endsWith('.tar.gz') || normalizedName.endsWith('.tar.bz2') || normalizedName.endsWith('.tar.xz')) {
+    return 'compressed';
+  }
+
+  const extension = path.extname(normalizedName).slice(1);
+  if (!extension) return 'others';
+
+  for (const [category, extensions] of Object.entries(CATEGORY_EXTENSION_MAP)) {
+    if (extensions.has(extension)) {
+      return category;
+    }
+  }
+
+  return 'others';
+}
+
+function buildDownloadSavePath(downloadDir, fileName) {
+  const category = getDownloadCategory(fileName);
+  return path.join(downloadDir, category, fileName);
+}
+
 class DownloadManager extends EventEmitter {
   constructor(options = {}) {
     super();
     this.store = new Store();
-    this.maxConcurrent = options.maxConcurrent || 3;
-    this.defaultConnections = options.defaultConnections || 16;
+    this.maxConcurrent = options.maxConcurrent || 5;
+    this.defaultConnections = options.defaultConnections || 64;
     this.defaultDownloadDir = options.downloadDir || path.join(require('os').homedir(), 'Downloads');
     this.downloads = new Map();
     this.queue = [];
@@ -114,10 +147,9 @@ class DownloadManager extends EventEmitter {
   }
 
   async addDownload(url, options = {}) {
-    const savePath = options.savePath || path.join(
-      options.downloadDir || this.defaultDownloadDir,
-      options.fileName || 'download'
-    );
+    const baseDownloadDir = options.downloadDir || this.defaultDownloadDir;
+    const requestedFileName = options.fileName || 'download';
+    let savePath = options.savePath || buildDownloadSavePath(baseDownloadDir, requestedFileName);
 
     const isStreaming = this._isStreamingUrl(url);
     const EngineClass = isStreaming ? YtDlpEngine : DownloadEngine;
@@ -136,14 +168,10 @@ class DownloadManager extends EventEmitter {
       // Use engine's updated savePath and fileName (which might have extensions now)
       engine.fileName = engine.fileName || info.fileName;
       engine.savePath = engine.savePath; // Sync if engine modified it internally (like YtDlpEngine does)
-      
-      // If user didn't provide a custom name, ensure we use the official one
-      if (info.fileName && !options.fileName) {
-        engine.savePath = path.join(
-          options.downloadDir || this.defaultDownloadDir,
-          info.fileName
-        );
-      }
+
+      const finalFileName = path.basename(engine.fileName || engine.savePath || requestedFileName);
+      savePath = buildDownloadSavePath(baseDownloadDir, finalFileName);
+      engine.savePath = savePath;
     } catch (err) {
       return { error: err.message };
     }

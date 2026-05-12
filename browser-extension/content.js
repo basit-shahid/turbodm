@@ -55,10 +55,10 @@ function routeUrlViaBackground(url) {
 }
 
 document.addEventListener('click', (event) => {
-  // Respect modified clicks and non-primary buttons.
+  // Only intercept if Shift+click for TurboDM (allows browser downloader by default)
   if (event.defaultPrevented) return;
   if (event.button !== 0) return;
-  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (!event.shiftKey) return; // Only route via TurboDM if Shift is held
 
   const anchor = event.target && event.target.closest ? event.target.closest('a[href]') : null;
   if (!anchor) return;
@@ -154,10 +154,13 @@ function createOverlayButton(videoElement) {
   };
 
   let hideTimer = null;
+  let isHoveringContainer = false;
+  let isHoveringButton = false;
 
   const setVisible = (isVisible) => {
     btn.style.opacity = isVisible ? '1' : '0';
-    btn.style.pointerEvents = isVisible ? 'auto' : 'none';
+    // Keep pointer-events enabled so the button stays clickable
+    btn.style.pointerEvents = 'auto';
   };
 
   const showButton = () => {
@@ -174,18 +177,31 @@ function createOverlayButton(videoElement) {
     }
 
     hideTimer = setTimeout(() => {
-      if (!container.matches(':hover') && !btn.matches(':hover')) {
+      // Only hide if neither the container nor the button is hovered
+      if (!isHoveringContainer && !isHoveringButton) {
         setVisible(false);
       }
       hideTimer = null;
-    }, 80);
+    }, 100);
   };
 
   // Keep the button visible while the pointer moves between the wrapper and the button itself.
-  container.addEventListener('pointerenter', showButton);
-  container.addEventListener('pointerleave', hideButton);
-  btn.addEventListener('pointerenter', showButton);
-  btn.addEventListener('pointerleave', hideButton);
+  container.addEventListener('pointerenter', () => {
+    isHoveringContainer = true;
+    showButton();
+  });
+  container.addEventListener('pointerleave', () => {
+    isHoveringContainer = false;
+    hideButton();
+  });
+  btn.addEventListener('pointerenter', () => {
+    isHoveringButton = true;
+    showButton();
+  });
+  btn.addEventListener('pointerleave', () => {
+    isHoveringButton = false;
+    hideButton();
+  });
   
   // Ensure the parent is positioned so absolute positioning works
   if (window.getComputedStyle(container).position === 'static') {
