@@ -102,7 +102,14 @@ function sendToTurboDM(url) {
     signal: controller.signal,
   })
     .catch(() => {
-      console.error('TurboDM server missing.');
+      console.error('TurboDM server missing. Falling back to custom protocol.');
+      // Create a temporary hidden iframe or link to trigger the protocol without losing current page
+      const a = document.createElement('a');
+      a.href = 'turbodm://?url=' + encodeURIComponent(url);
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => a.remove(), 1000);
     })
     .finally(() => {
       clearTimeout(timeout);
@@ -182,7 +189,7 @@ function createOverlayButton(videoElement) {
         setVisible(false);
       }
       hideTimer = null;
-    }, 100);
+    }, 800);
   };
 
   // Keep the button visible while the pointer moves between the wrapper and the button itself.

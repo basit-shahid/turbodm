@@ -1,6 +1,6 @@
 {
   "name": "turbo-download-manager",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "High-end Internet Download Manager with 16-connection parallel downloading",
   "main": "main.js",
   "scripts": {
@@ -61,6 +61,14 @@
     "asarUnpack": [
       "node_modules/yt-dlp-exec/**",
       "node_modules/ffmpeg-static/**"
+    ],
+    "protocols": [
+      {
+        "name": "TurboDM",
+        "schemes": [
+          "turbodm"
+        ]
+      }
     ],
     "win": {
       "target": [

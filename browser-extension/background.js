@@ -69,7 +69,7 @@ function shouldSkipRouting(url) {
   return false;
 }
 
-// Intercept ALL browser downloads and route them to TurboDM
+// Intercept browser downloads and route them to TurboDM
 chrome.downloads.onCreated.addListener((downloadItem) => {
   const url = downloadItem.finalUrl || downloadItem.url;
   if (!url) return;
@@ -78,16 +78,13 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   if (downloadItem.byExtensionId) return;
   if (shouldSkipRouting(url)) return;
 
-  // Cancel Chrome's built-in download immediately
+  // Cancel Chrome's built-in download and route to TurboDM
   chrome.downloads.cancel(downloadItem.id, () => {
-    // Also remove it from Chrome's download bar/list
     chrome.downloads.erase({ id: downloadItem.id }, () => {
-      // Ignore erase failures for already-removed items.
       void chrome.runtime.lastError;
     });
   });
 
-  // Route it to TurboDM
   sendToTurboDM(url);
 });
 
@@ -105,7 +102,13 @@ function sendToTurboDM(url) {
     signal: controller.signal,
   })
     .catch((error) => {
-      console.error('TurboDM is not running. Please open TurboDM first.', error);
+      console.error('TurboDM server not responding. Falling back to custom protocol launcher.', error);
+      chrome.tabs.create({ url: 'turbodm://?url=' + encodeURIComponent(url), active: false }, (tab) => {
+        // We close the tab shortly after it triggers the protocol prompt.
+        if (tab && tab.id) {
+          setTimeout(() => { chrome.tabs.remove(tab.id).catch(() => {}); }, 3000);
+        }
+      });
     })
     .finally(() => {
       clearTimeout(timeout);

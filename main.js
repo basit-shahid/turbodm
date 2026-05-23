@@ -10,6 +10,31 @@ let downloadManager;
 let clipboardWatcher;
 let lastClipboardText = '';
 
+function forceFocusWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.setAlwaysOnTop(false);
+  }
+}
+
+function handleProtocolUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol === 'turbodm:') {
+      const targetUrl = parsed.searchParams.get('url');
+      if (targetUrl) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('clipboard-url', targetUrl);
+          forceFocusWindow();
+        }
+      }
+    }
+  } catch (e) {}
+}
+
 // Downloadable URL patterns
 const DOWNLOADABLE_EXTENSIONS = /\.(zip|rar|7z|tar|gz|bz2|xz|iso|exe|msi|dmg|pkg|deb|rpm|apk|pdf|doc|docx|xls|xlsx|ppt|pptx|mp4|mkv|avi|mov|wmv|flv|webm|mp3|flac|aac|ogg|wav|wma|jpg|jpeg|png|gif|bmp|svg|webp|tiff|psd|ai|eps|torrent|bin|img|vhd|vmdk)$/i;
 
@@ -44,7 +69,7 @@ function createWindow() {
     minHeight: 500,
     frame: false,
     transparent: false,
-    backgroundColor: '#0a0e1a',
+    backgroundColor: '#f8fafc',
     webPreferences: {
       preload: path.join(__dirname, 'src', 'renderer', 'preload.js'),
       contextIsolation: true,
@@ -116,8 +141,7 @@ function startClipboardWatcher() {
       if (isDownloadableUrl(text)) {
         if (mainWindow) {
           mainWindow.webContents.send('clipboard-url', text);
-          mainWindow.show();
-          mainWindow.focus();
+          forceFocusWindow();
         }
       }
     }
@@ -222,23 +246,41 @@ function setupIPC() {
   });
 }
 
-app.whenReady().then(() => {
-  downloadManager = new DownloadManager();
+if (process.defaultApp) {
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('turbodm', process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  app.setAsDefaultProtocolClient('turbodm');
+}
 
-  // Load saved settings
-  const Store = require('./src/store');
-  const store = new Store();
-  const savedSettings = store.get('settings', {});
-  if (savedSettings.downloadDir) downloadManager.defaultDownloadDir = savedSettings.downloadDir;
-  if (savedSettings.maxConcurrent) downloadManager.maxConcurrent = savedSettings.maxConcurrent;
-  if (savedSettings.defaultConnections) downloadManager.defaultConnections = savedSettings.defaultConnections;
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  app.quit();
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    forceFocusWindow();
+    const urlArg = commandLine.find(arg => arg.startsWith('turbodm://'));
+    if (urlArg) handleProtocolUrl(urlArg);
+  });
 
-  createWindow();
-  createTray();
-  startClipboardWatcher();
-  setupIPC();
-  createLocalServer();
-});
+  app.whenReady().then(() => {
+    downloadManager = new DownloadManager();
+
+    const Store = require('./src/store');
+    const store = new Store();
+    const savedSettings = store.get('settings', {});
+    if (savedSettings.downloadDir) downloadManager.defaultDownloadDir = savedSettings.downloadDir;
+    if (savedSettings.maxConcurrent) downloadManager.maxConcurrent = savedSettings.maxConcurrent;
+    if (savedSettings.defaultConnections) downloadManager.defaultConnections = savedSettings.defaultConnections;
+
+    createWindow();
+    createTray();
+    startClipboardWatcher();
+    setupIPC();
+    createLocalServer();
+  });
+}
 
 function createLocalServer() {
   const server = http.createServer((req, res) => {
@@ -261,8 +303,7 @@ function createLocalServer() {
           if (data.url) {
             if (mainWindow && !mainWindow.isDestroyed()) {
               mainWindow.webContents.send('clipboard-url', data.url);
-              mainWindow.show();
-              mainWindow.focus();
+              forceFocusWindow();
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true }));

@@ -5,6 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TurboDM - Download Manager</title>
   <link rel="stylesheet" href="styles.css">
+  <script>
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  </script>
 </head>
 <body>
   <!-- Title Bar -->
@@ -53,6 +57,9 @@
       </div>
     </div>
     <div class="toolbar-right">
+      <button class="btn btn-ghost" id="btn-theme" title="Toggle Theme">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"></path></svg>
+      </button>
       <button class="btn btn-ghost" id="btn-settings" title="Settings">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 15C13.6569 15 15 13.6569 15 12C15 10.3431 13.6569 9 12 9C10.3431 9 9 10.3431 9 12C9 13.6569 10.3431 15 12 15Z" stroke="currentColor" stroke-width="2"/><path d="M19.4 15C19.2 15.3 19.2 15.7 19.4 16L20.5 17.8C20.6 18 20.6 18.3 20.4 18.4L18.4 20.4C18.2 20.6 18 20.6 17.8 20.5L16 19.4C15.7 19.2 15.3 19.2 15 19.4L14.8 19.5C14.5 19.7 14.3 20 14.3 20.4V22C14.3 22.3 14 22.5 13.8 22.5H10.2C10 22.5 9.7 22.3 9.7 22V20.4C9.7 20 9.5 19.7 9.2 19.5L9 19.4C8.7 19.2 8.3 19.2 8 19.4L6.2 20.5C6 20.6 5.7 20.6 5.6 20.4L3.6 18.4C3.4 18.2 3.4 18 3.5 17.8L4.6 16C4.8 15.7 4.8 15.3 4.6 15L4.5 14.8C4.3 14.5 4 14.3 3.6 14.3H2C1.7 14.3 1.5 14 1.5 13.8V10.2C1.5 10 1.7 9.7 2 9.7H3.6C4 9.7 4.3 9.5 4.5 9.2L4.6 9C4.8 8.7 4.8 8.3 4.6 8L3.5 6.2C3.4 6 3.4 5.7 3.6 5.6L5.6 3.6C5.8 3.4 6 3.4 6.2 3.5L8 4.6C8.3 4.8 8.7 4.8 9 4.6L9.2 4.5C9.5 4.3 9.7 4 9.7 3.6V2C9.7 1.7 10 1.5 10.2 1.5H13.8C14 1.5 14.3 1.7 14.3 2V3.6C14.3 4 14.5 4.3 14.8 4.5L15 4.6C15.3 4.8 15.7 4.8 16 4.6L17.8 3.5C18 3.4 18.3 3.4 18.4 3.6L20.4 5.6C20.6 5.8 20.6 6 20.5 6.2L19.4 8C19.2 8.3 19.2 8.7 19.4 9L19.5 9.2C19.7 9.5 20 9.7 20.4 9.7H22C22.3 9.7 22.5 10 22.5 10.2V13.8C22.5 14 22.3 14.3 22 14.3H20.4C20 14.3 19.7 14.5 19.5 14.8L19.4 15Z" stroke="currentColor" stroke-width="2"/></svg>
       </button>

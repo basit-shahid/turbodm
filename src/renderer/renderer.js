@@ -71,11 +71,11 @@ function renderTransportNotice(dl) {
 function renderDownloadItem(dl) {
   const type = getFileType(dl.fileName);
   const ext = dl.isStreaming ? 'VID' : getFileExt(dl.fileName);
-  const progress = dl.progress || 0;
   const isActive = dl.status === 'downloading';
   const isPaused = dl.status === 'paused';
   const isCompleted = dl.status === 'completed';
   const isFailed = dl.status === 'failed';
+  const progress = isCompleted ? 100 : (dl.progress || 0);
   const currentMode = (dl.connectionMode === 'parallel' || dl.connectionMode === 'single')
     ? dl.connectionMode
     : ((dl.modePreference === 'parallel' || dl.modePreference === 'single') ? dl.modePreference : 'single');
@@ -200,20 +200,20 @@ function renderDownloadItem(dl) {
 }
 
 // ===== RENDER ALL =====
-function renderDownloads() {
-  const filtered = downloads.filter(d => {
-    // Search query filter
-    if (searchQuery && !d.fileName.toLowerCase().includes(searchQuery.toLowerCase())) {
-      return false;
-    }
+function itemMatchesFilters(d) {
+  if (searchQuery && !d.fileName.toLowerCase().includes(searchQuery.toLowerCase())) {
+    return false;
+  }
 
-    // Category filter
-    if (currentFilter === 'all') return true;
-    if (currentFilter === 'downloading') return d.status === 'downloading' || d.status === 'pending';
-    if (currentFilter === 'completed') return d.status === 'completed';
-    if (currentFilter === 'paused') return d.status === 'paused' || d.status === 'failed';
-    return true;
-  });
+  if (currentFilter === 'all') return true;
+  if (currentFilter === 'downloading') return d.status === 'downloading' || d.status === 'pending';
+  if (currentFilter === 'completed') return d.status === 'completed';
+  if (currentFilter === 'paused') return d.status === 'paused' || d.status === 'failed';
+  return true;
+}
+
+function renderDownloads() {
+  const filtered = downloads.filter(itemMatchesFilters);
 
   if (filtered.length === 0) {
     if (downloads.length === 0) {
@@ -248,8 +248,18 @@ function updateDownloadInPlace(state) {
     downloads.push(state);
   }
 
-  // Try to update in place for performance
+  const isVisible = itemMatchesFilters(state);
   const existing = $downloadList.querySelector(`[data-id="${state.id}"]`);
+
+  if (!isVisible) {
+    if (existing) {
+      renderDownloads();
+    }
+    updateStatusBar();
+    return;
+  }
+
+  // Try to update in place for performance
   if (existing) {
     const oldStatus = existing.className.split(' ').find(c => ['downloading', 'paused', 'completed', 'failed', 'cancelled', 'pending'].includes(c));
     
@@ -572,6 +582,12 @@ document.getElementById('btn-clear').addEventListener('click', async () => {
   renderDownloads();
 });
 document.getElementById('btn-settings').addEventListener('click', showSettings);
+document.getElementById('btn-theme').addEventListener('click', () => {
+  const currentTheme = document.documentElement.getAttribute('data-theme');
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('theme', newTheme);
+});
 
 // Add modal
 document.getElementById('modal-add-close').addEventListener('click', hideAddModal);
