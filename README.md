@@ -6,7 +6,7 @@
 
 ## ✨ Key Features
 
-- **16-Connection Parallel Engine**: Segmented file downloading for maximum speed.
+- **32-Connection Parallel Engine**: Segmented file downloading for maximum speed.
 - **Universal Browser Interception**: Intercepts all browser downloads via a dedicated Chrome extension.
 - **Smart Media Capture**: Automatically detects streaming videos (YouTube, Twitter, TikTok, etc.) and offers resolution selection.
 - **Automatic Muxing**: Seamlessly merges high-quality video and audio streams using FFmpeg.
