@@ -1,6 +1,6 @@
 # TurboDM 🚀
 
-**TurboDM** is a high-performance, professional-grade Download Manager built for Windows. It features a sleek, neon-inspired UI and a powerful multi-threaded core capable of accelerating downloads with up to 16 parallel connections.
+**TurboDM** is a high-performance, professional-grade Download Manager built for Windows. It features a sleek, neon-inspired UI and a powerful multi-threaded core capable of accelerating downloads with up to 32 parallel connections.
 
 ![App Icon](assets/newlogo.jpg)
 
