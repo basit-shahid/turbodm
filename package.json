@@ -1,7 +1,7 @@
 {
   "name": "turbo-download-manager",
   "version": "1.1.0",
-  "description": "High-end Internet Download Manager with 16-connection parallel downloading",
+  "description": "TurboDM — Download Manager",
   "main": "main.js",
   "scripts": {
     "start": "electron .",

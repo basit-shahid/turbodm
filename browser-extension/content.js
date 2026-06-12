@@ -1,4 +1,7 @@
 const TURBODM_API = 'http://127.0.0.1:10101/download';
+const RETRY_INTERVAL_MS = 1500;
+const RETRY_MAX_DURATION_MS = 15000;
+
 const SKIP_PATTERNS = [
   /^blob:/i,
   /^data:/i,
@@ -49,16 +52,13 @@ function routeUrlViaBackground(url) {
   try {
     chrome.runtime.sendMessage({ type: 'turbodm-route-download', url });
   } catch {
-    // Fallback to direct local API call if background worker is unavailable.
     sendToTurboDM(url);
   }
 }
 
 document.addEventListener('click', (event) => {
-  // Only intercept if Shift+click for TurboDM (allows browser downloader by default)
   if (event.defaultPrevented) return;
   if (event.button !== 0) return;
-  if (!event.shiftKey) return; // Only route via TurboDM if Shift is held
 
   const anchor = event.target && event.target.closest ? event.target.closest('a[href]') : null;
   if (!anchor) return;
@@ -69,7 +69,90 @@ document.addEventListener('click', (event) => {
   routeUrlViaBackground(anchor.href);
 }, true);
 
-// Set up a mutation observer to catch newly added video players without rescanning too aggressively.
+// ── Protocol launch + auto-retry ────────────────────────────
+// When TurboDM's local server is unreachable, trigger the turbodm:// protocol
+// in the CURRENT tab (via a hidden iframe — no new tab opened) and then
+// automatically retry sending the URL every 1.5 s for up to 15 s so the
+// download is captured the moment TurboDM finishes starting.
+
+let retryTimer = null;
+
+function launchProtocolAndRetry(url) {
+  // Trigger protocol in the current tab via hidden iframe (no new tab)
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  iframe.src = 'turbodm://?url=' + encodeURIComponent(url);
+  document.body.appendChild(iframe);
+  setTimeout(() => iframe.remove(), 2000);
+
+  // Clear any previous retry loop
+  if (retryTimer) clearInterval(retryTimer);
+
+  // Auto-retry: poll the local server until TurboDM comes up
+  const startTime = Date.now();
+  retryTimer = setInterval(async () => {
+    if (Date.now() - startTime > RETRY_MAX_DURATION_MS) {
+      clearInterval(retryTimer);
+      retryTimer = null;
+      return;
+    }
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 2000);
+      const resp = await fetch(TURBODM_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (resp.ok) {
+        // Success — TurboDM received the URL, stop retrying
+        clearInterval(retryTimer);
+        retryTimer = null;
+      }
+    } catch {
+      // Server still not up — keep retrying
+    }
+  }, RETRY_INTERVAL_MS);
+}
+
+// ── Send to TurboDM ─────────────────────────────────────────
+
+function sendToTurboDM(url) {
+  if (isSkippableUrl(url)) return;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+
+  fetch(TURBODM_API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+    signal: controller.signal,
+  })
+    .then((resp) => {
+      if (!resp.ok) throw new Error('Server error');
+    })
+    .catch(() => {
+      // Server not running — launch protocol in current tab + auto-retry
+      launchProtocolAndRetry(url);
+    })
+    .finally(() => {
+      clearTimeout(timeout);
+    });
+}
+
+// Listen for background script asking us to trigger protocol in current tab
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message && message.type === 'turbodm-launch-protocol' && message.url) {
+    launchProtocolAndRetry(message.url);
+    sendResponse({ ok: true });
+  }
+});
+
+// ── Video Overlay Scanner ───────────────────────────────────
+
 let scanScheduled = false;
 const observer = new MutationObserver((mutations) => {
   for (const mutation of mutations) {
@@ -89,72 +172,34 @@ function scheduleScan() {
   });
 }
 
-function sendToTurboDM(url) {
-  if (isSkippableUrl(url)) return;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
-
-  fetch(TURBODM_API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-    signal: controller.signal,
-  })
-    .catch(() => {
-      console.error('TurboDM server missing. Falling back to custom protocol.');
-      // Create a temporary hidden iframe or link to trigger the protocol without losing current page
-      const a = document.createElement('a');
-      a.href = 'turbodm://?url=' + encodeURIComponent(url);
-      a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => a.remove(), 1000);
-    })
-    .finally(() => {
-      clearTimeout(timeout);
-    });
-}
-
 function scanForVideos() {
   const videos = document.querySelectorAll('video');
   videos.forEach(video => {
-    // Avoid double injecting
     if (video.dataset.turbodmInjected) return;
-    
-    // Only inject on decently sized videos to ignore tiny backgrounds
     if (video.clientWidth < 300) return;
-
     video.dataset.turbodmInjected = "true";
     createOverlayButton(video);
   });
 }
 
 function createOverlayButton(videoElement) {
-  // Try to find a relative container to position the button on top of the video
-  // Some sites use wrappers, some just plop a video down. We append to parent.
   let container = videoElement.parentElement;
   if (!container) return;
-  
-  // If the container is static, we must make sure positioning works (or overlay directly on body)
-  // Usually appending to the direct parent works for standard players
-  
+
   const btn = document.createElement('button');
   btn.className = 'turbodm-video-overlay-btn';
   btn.innerHTML = `
     <svg viewBox="0 0 24 24" fill="none"><path d="M5 12H19M19 12L12 5M19 12L12 19" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
     Download
   `;
-  
+
   btn.onclick = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    // Default to the page URL for streaming sites (YT, Twitch), as yt-dlp prefers page URL
-    // If it's a raw video tag on a random site without yt-dlp support, use its src.
     const host = window.location.hostname.toLowerCase();
     const preferPageUrl = ['youtube', 'twitter', 'x.com', 'tiktok', 'vimeo', 'twitch'].some(domain => host.includes(domain));
     const urlToSend = preferPageUrl
-      ? window.location.href 
+      ? window.location.href
       : (videoElement.src || window.location.href);
 
     sendToTurboDM(urlToSend);
@@ -166,61 +211,36 @@ function createOverlayButton(videoElement) {
 
   const setVisible = (isVisible) => {
     btn.style.opacity = isVisible ? '1' : '0';
-    // Keep pointer-events enabled so the button stays clickable
     btn.style.pointerEvents = 'auto';
   };
 
   const showButton = () => {
-    if (hideTimer) {
-      clearTimeout(hideTimer);
-      hideTimer = null;
-    }
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
     setVisible(true);
   };
 
   const hideButton = () => {
-    if (hideTimer) {
-      clearTimeout(hideTimer);
-    }
-
+    if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      // Only hide if neither the container nor the button is hovered
-      if (!isHoveringContainer && !isHoveringButton) {
-        setVisible(false);
-      }
+      if (!isHoveringContainer && !isHoveringButton) setVisible(false);
       hideTimer = null;
     }, 800);
   };
 
-  // Keep the button visible while the pointer moves between the wrapper and the button itself.
-  container.addEventListener('pointerenter', () => {
-    isHoveringContainer = true;
-    showButton();
-  });
-  container.addEventListener('pointerleave', () => {
-    isHoveringContainer = false;
-    hideButton();
-  });
-  btn.addEventListener('pointerenter', () => {
-    isHoveringButton = true;
-    showButton();
-  });
-  btn.addEventListener('pointerleave', () => {
-    isHoveringButton = false;
-    hideButton();
-  });
-  
-  // Ensure the parent is positioned so absolute positioning works
+  container.addEventListener('pointerenter', () => { isHoveringContainer = true; showButton(); });
+  container.addEventListener('pointerleave', () => { isHoveringContainer = false; hideButton(); });
+  btn.addEventListener('pointerenter', () => { isHoveringButton = true; showButton(); });
+  btn.addEventListener('pointerleave', () => { isHoveringButton = false; hideButton(); });
+
   if (window.getComputedStyle(container).position === 'static') {
     container.style.position = 'relative';
   }
 
   setVisible(false);
-
   container.appendChild(btn);
 }
 
-// Initial scan and observer kick off
+// Initial scan and observer
 scanForVideos();
 observer.observe(document.body, { childList: true, subtree: true });
 

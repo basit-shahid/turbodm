@@ -5,7 +5,8 @@
   "description": "Send links directly to TurboDM Download Manager",
   "permissions": [
     "contextMenus",
-    "downloads"
+    "downloads",
+    "downloads.ui"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -9,6 +9,7 @@ let tray;
 let downloadManager;
 let clipboardWatcher;
 let lastClipboardText = '';
+let pendingProtocolUrls = [];
 
 function forceFocusWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
@@ -26,9 +27,12 @@ function handleProtocolUrl(url) {
     if (parsed.protocol === 'turbodm:') {
       const targetUrl = parsed.searchParams.get('url');
       if (targetUrl) {
-        if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
           mainWindow.webContents.send('clipboard-url', targetUrl);
           forceFocusWindow();
+        } else {
+          // Window not ready yet — queue for later
+          pendingProtocolUrls.push(targetUrl);
         }
       }
     }
@@ -83,6 +87,14 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+    // Flush any protocol URLs that arrived before the window was ready
+    if (pendingProtocolUrls.length > 0) {
+      pendingProtocolUrls.forEach((url) => {
+        mainWindow.webContents.send('clipboard-url', url);
+      });
+      pendingProtocolUrls = [];
+      forceFocusWindow();
+    }
   });
 
   mainWindow.on('close', (e) => {
@@ -273,6 +285,10 @@ if (!gotTheLock) {
     if (savedSettings.downloadDir) downloadManager.defaultDownloadDir = savedSettings.downloadDir;
     if (savedSettings.maxConcurrent) downloadManager.maxConcurrent = savedSettings.maxConcurrent;
     if (savedSettings.defaultConnections) downloadManager.defaultConnections = savedSettings.defaultConnections;
+
+    // Check for protocol URL in initial launch args (cold-start)
+    const protocolArg = process.argv.find(arg => arg.startsWith('turbodm://'));
+    if (protocolArg) handleProtocolUrl(protocolArg);
 
     createWindow();
     createTray();
