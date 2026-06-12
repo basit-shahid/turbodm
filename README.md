@@ -31,7 +31,7 @@
 
 To install TurboDM on your device:
 
-1. Download the latest installer from the [Releases](https://github.com/yourusername/turbodm/releases) page (if hosted).
+1. Download the latest installer from the [Releases](https://github.com/basit-shahid/turbodm/releases/tag/%23IDMALTERNATIVE) page (if hosted).
 2. Run `TurboDM Setup 1.1.0.exe`.
 3. Follow the setup wizard to create a desktop shortcut.
 
