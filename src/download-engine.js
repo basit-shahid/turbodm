@@ -82,19 +82,31 @@ class DownloadEngine extends EventEmitter {
   }
 
   _getDefaultHeaders(useBrowserUA = false) {
-    const userAgent = useBrowserUA
-      ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-      : 'TurboDM/1.0';
-    return {
+    const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+    const customUA = this.headers && this.headers['User-Agent'];
+    const userAgent = (useBrowserUA || customUA) ? (customUA || BROWSER_UA) : 'TurboDM/1.0';
+
+    // Derive Origin from Referer if not explicitly set
+    let origin = this.headers && this.headers['Origin'];
+    if (!origin && this.headers && this.headers['Referer']) {
+      try {
+        const r = new URL(this.headers['Referer']);
+        origin = r.origin;
+      } catch {}
+    }
+
+    const base = {
       'User-Agent': userAgent,
-      'Accept': '*/*',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
       'Accept-Language': 'en-US,en;q=0.9',
       'Accept-Encoding': 'gzip, deflate, br',
-      'DNT': '1',
       'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1',
-      ...this.headers,
     };
+
+    if (origin) base['Origin'] = origin;
+
+    // Custom headers from browser go last so they take full precedence
+    return { ...base, ...this.headers, 'User-Agent': userAgent };
   }
 
   _destroyAgents() {
@@ -153,23 +165,33 @@ class DownloadEngine extends EventEmitter {
           }
 
           if ([403, 405, 501].includes(res.statusCode) && overrideMethod === 'HEAD' && redirectCount === 0) {
-            // Hard reject for HEAD on pre-signed URLs. Fallback safely to GET with minimal payload range.
+            // HEAD is not allowed on this URL — try GET with a tiny range instead.
             res.destroy();
             makeRequest(requestUrl, redirectCount, 'GET');
             return;
           }
 
-          // Special case: retry generic 403 with browser User-Agent if GET fallback also fails or isn't used
+          // 403 on GET with no cookies: upgrade to full browser headers (with cookies/UA) and retry once.
           if (res.statusCode === 403 && overrideMethod === 'GET' && redirectCount === 0) {
             res.destroy();
-            reqOptions.headers = this._getDefaultHeaders(true);
-            const retryReq = client.request(reqOptions, (retryRes) => {
+            // Build a fresh options object with full browser headers so we do not mutate the closed request's options.
+            const retryOptions = {
+              hostname: parsedUrl.hostname,
+              port: parsedUrl.port,
+              path: parsedUrl.pathname + parsedUrl.search,
+              method: 'GET',
+              headers: { ...this._getDefaultHeaders(true), Range: 'bytes=0-0' },
+              agent: this._getAgent(parsedUrl.protocol),
+              timeout: this.rangeProbeTimeout,
+            };
+            const retryReq = client.request(retryOptions, (retryRes) => {
               if (retryRes.statusCode >= 200 && retryRes.statusCode < 300) {
+                // Success — continue parsing with the response we have
                 req.emit('retry-success', retryRes);
                 return;
               }
               retryRes.destroy();
-              reject(new Error(`HTTP ${retryRes.statusCode}: ${retryRes.statusMessage}`));
+              reject(new Error(`HTTP ${retryRes.statusCode}: Server denied access even with browser credentials`));
             });
             retryReq.on('error', (err) => reject(err));
             retryReq.end();
@@ -706,10 +728,11 @@ class DownloadEngine extends EventEmitter {
 
         if (res.statusCode >= 400) {
           if (res.statusCode === 403 && attempt === 0) {
-            // Special case: retry 403 with browser User-Agent
+            // Retry with full browser UA — the next call to _getDefaultHeaders(attempt>0) will use browser UA
             res.resume();
-            headers['User-Agent'] = this._getDefaultHeaders(true)['User-Agent'];
-            this._downloadChunk(chunk, 1).then(resolve).catch(reject);
+            setTimeout(() => {
+              this._downloadChunk(chunk, 1).then(resolve).catch(reject);
+            }, 500);
             return;
           }
           

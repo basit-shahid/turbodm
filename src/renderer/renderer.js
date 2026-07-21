@@ -677,6 +677,27 @@ const unsubClipboard = window.tdm.onClipboardUrl((data) => {
   showClipboardToast(url, headers);
 });
 
+// When the extension auto-starts a download without showing the modal,
+// display a brief "Download Started" notification with the file name.
+let autostartToastTimer = null;
+const $autostartToast = document.getElementById('autostart-toast');
+const $autostartToastName = document.getElementById('autostart-toast-name');
+
+window.tdm.onExtensionDownloadStarted((data) => {
+  const name = data.fileName || data.url || 'File';
+  $autostartToastName.textContent = name;
+  $autostartToast.style.display = '';
+  if (autostartToastTimer) clearTimeout(autostartToastTimer);
+  autostartToastTimer = setTimeout(() => {
+    $autostartToast.style.display = 'none';
+  }, 5000);
+});
+
+document.getElementById('autostart-toast-dismiss').addEventListener('click', () => {
+  $autostartToast.style.display = 'none';
+  if (autostartToastTimer) clearTimeout(autostartToastTimer);
+});
+
 // ===== INIT =====
 (async () => {
   downloads = await window.tdm.getAllDownloads();

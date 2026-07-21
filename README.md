@@ -1,12 +1,12 @@
 # TurboDM 🚀
 
-**TurboDM** is a high-performance, professional-grade Download Manager built for Windows. It features a sleek, neon-inspired UI and a powerful multi-threaded core capable of accelerating downloads with up to 16 parallel connections.
+**TurboDM** is a high-performance, professional-grade Download Manager built for Windows. It features a sleek, neon-inspired UI and a powerful multi-threaded core capable of accelerating downloads with up to 32 parallel connections.
 
-![App Icon](build/icon.png)
+![App Icon](assets/newlogo.jpg)
 
 ## ✨ Key Features
 
-- **16-Connection Parallel Engine**: Segmented file downloading for maximum speed.
+- **32-Connection Parallel Engine**: Segmented file downloading for maximum speed.
 - **Universal Browser Interception**: Intercepts all browser downloads via a dedicated Chrome extension.
 - **Smart Media Capture**: Automatically detects streaming videos (YouTube, Twitter, TikTok, etc.) and offers resolution selection.
 - **Automatic Muxing**: Seamlessly merges high-quality video and audio streams using FFmpeg.
@@ -31,8 +31,8 @@
 
 To install TurboDM on your device:
 
-1. Download the latest installer from the [Releases](https://github.com/yourusername/turbodm/releases) page (if hosted).
-2. Run `TurboDM Setup 1.0.1.exe`.
+1. Download the latest installer from the [Releases](https://github.com/basit-shahid/turbodm/releases/tag/%23IDMALTERNATIVE) page (if hosted).
+2. Run `TurboDM Setup 1.1.0.exe`.
 3. Follow the setup wizard to create a desktop shortcut.
 
 ### Browser Integration
@@ -79,4 +79,4 @@ This project is licensed under the MIT License - see [LICENSE](LICENSE).
 Third-party dependencies are subject to their own terms - see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ---
-*Created with ❤️ by TurboDM*
+*Created with ❤️ by Abdul basit shahid*

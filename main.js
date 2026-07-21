@@ -321,16 +321,39 @@ function createLocalServer() {
     if (req.method === 'POST' && req.url === '/download') {
       let body = '';
       req.on('data', chunk => body += chunk.toString());
-      req.on('end', () => {
+      req.on('end', async () => {
         try {
           const data = JSON.parse(body);
           if (data.url) {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('clipboard-url', { url: data.url, headers: data.headers || {} });
-              forceFocusWindow();
-            }
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true }));
+
+            // Auto-start the download immediately using headers from the browser.
+            // This is critical for short-lived pre-signed URLs (Claude, Gemini, ChatGPT)
+            // which expire within seconds — we cannot wait for the user to click through the toast.
+            try {
+              const settings = downloadManager.getSettings();
+              const result = await downloadManager.addDownload(data.url, {
+                downloadDir: settings.downloadDir,
+                headers: data.headers || {},
+              });
+              // Notify UI that download has been queued automatically
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('download-update', result);
+                mainWindow.webContents.send('extension-download-started', {
+                  url: data.url,
+                  fileName: result.fileName || data.url,
+                });
+              }
+            } catch (e) {
+              // If auto-start fails (e.g. 404, network error), fall back to manual toast
+              // so the user has a chance to review and try manually.
+              console.error('[TurboDM] Auto-start failed, falling back to toast:', e.message);
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('clipboard-url', { url: data.url, headers: data.headers || {} });
+                forceFocusWindow();
+              }
+            }
             return;
           }
         } catch (e) {}

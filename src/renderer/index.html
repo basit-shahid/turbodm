@@ -266,6 +266,22 @@
     </div>
   </div>
 
+  <!-- Auto-Start Toast (shown when extension starts a download automatically) -->
+  <div class="toast" id="autostart-toast" style="display:none; bottom: 80px;">
+    <div class="toast-content">
+      <div class="toast-icon" style="color:var(--success)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 6L9 17L4 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="toast-text">
+        <span class="toast-title">Download Started</span>
+        <span class="toast-url" id="autostart-toast-name" style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      </div>
+    </div>
+    <div class="toast-actions">
+      <button class="btn btn-sm btn-ghost" id="autostart-toast-dismiss">OK</button>
+    </div>
+  </div>
+
   <script src="renderer.js"></script>
 </body>
 </html>

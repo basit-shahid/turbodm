@@ -102,14 +102,20 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   }
   
   recentRoutedUrls.set(url, now);
-  sendToTurboDM(url, null);
+
+  // Fetch the active tab so we can capture the Referer/Origin/cookies from the page that triggered the download.
+  // This is critical for authenticated downloads from ChatGPT, Claude, Gemini, etc.
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const activeTab = tabs && tabs[0] ? tabs[0] : null;
+    sendToTurboDM(url, activeTab);
+  });
 });
 
 // Function to ping the TurboDM Local Server.
 // On failure, ask the content script of the current tab to trigger the protocol
 // in-page (no new tab) with auto-retry.
 function sendToTurboDM(url, tab) {
-  // Grab headers (cookies, user-agent, referer)
+  // Grab headers (cookies, user-agent, referer, origin)
   const payload = { url: url, headers: {} };
   
   if (navigator.userAgent) {
@@ -118,6 +124,11 @@ function sendToTurboDM(url, tab) {
   
   if (tab && tab.url) {
     payload.headers['Referer'] = tab.url;
+    // Derive Origin from the tab URL (required by many AI services like Claude, Gemini, ChatGPT)
+    try {
+      const parsed = new URL(tab.url);
+      payload.headers['Origin'] = parsed.origin;
+    } catch {}
   }
 
   // Get all cookies for the target URL

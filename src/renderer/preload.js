@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('tdm', {
     return () => ipcRenderer.removeListener('clipboard-url', handler);
   },
 
+  onExtensionDownloadStarted: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('extension-download-started', handler);
+    return () => ipcRenderer.removeListener('extension-download-started', handler);
+  },
+
   // Window controls
   minimizeWindow: () => ipcRenderer.send('minimize-window'),
   closeWindow: () => ipcRenderer.send('close-window'),
