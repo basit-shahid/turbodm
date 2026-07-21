@@ -1,6 +1,8 @@
 // ===== STATE =====
 let downloads = [];
 let clipboardUrl = null;
+let clipboardHeaders = {};
+let addModalHeaders = {};
 let toastTimeout = null;
 let currentFilter = 'all';
 let searchQuery = '';
@@ -401,20 +403,22 @@ async function openFolder(filePath) {
 }
 
 // ===== ADD DOWNLOAD MODAL =====
-function showAddModal(url = '') {
+function showAddModal(url = '', headers = {}) {
   $modalAdd.style.display = '';
+  addModalHeaders = headers || {};
   $inputUrl.value = url;
   $inputFilename.value = '';
   $fileInfo.style.display = 'none';
   $inputUrl.focus();
 
   if (url) {
-    analyzeUrl(url);
+    analyzeUrl(url, undefined, addModalHeaders);
   }
 }
 
 function hideAddModal() {
   $modalAdd.style.display = 'none';
+  addModalHeaders = {};
   $inputUrl.value = '';
   $inputFilename.value = '';
   document.getElementById('input-transfer-mode').value = 'auto';
@@ -422,7 +426,7 @@ function hideAddModal() {
   lastAnalyzedInfo = null;
 }
 
-async function analyzeUrl(url, formatId) {
+async function analyzeUrl(url, formatId, headers = addModalHeaders) {
   if (!url) return;
 
   const $btn = document.getElementById('btn-analyze');
@@ -430,7 +434,7 @@ async function analyzeUrl(url, formatId) {
   $btn.disabled = true;
 
   try {
-    const info = await window.tdm.getFileInfo(url, formatId);
+    const info = await window.tdm.getFileInfo(url, formatId, headers);
     if (info.error) {
       lastAnalyzedInfo = null;
       $fileInfo.style.display = 'block';
@@ -494,6 +498,7 @@ async function startDownload() {
               ? document.getElementById('input-quality').value 
               : undefined,
     downloadDir: settings.downloadDir || undefined,
+    headers: addModalHeaders,
   };
 
   hideAddModal();
@@ -547,8 +552,9 @@ async function saveSettings() {
 }
 
 // ===== CLIPBOARD TOAST =====
-function showClipboardToast(url) {
+function showClipboardToast(url, headers = {}) {
   clipboardUrl = url;
+  clipboardHeaders = headers;
   $toastUrl.textContent = url;
   $clipboardToast.style.display = '';
 
@@ -623,7 +629,7 @@ document.getElementById('btn-browse-dir').addEventListener('click', async () => 
 // Toast
 document.getElementById('toast-download').addEventListener('click', () => {
   hideClipboardToast();
-  showAddModal(clipboardUrl);
+  showAddModal(clipboardUrl, clipboardHeaders);
 });
 // Sidebar Filters
 document.querySelectorAll('.sidebar-item').forEach(item => {
@@ -665,8 +671,10 @@ const unsubUpdate = window.tdm.onDownloadUpdate((state) => {
   updateDownloadInPlace(state);
 });
 
-const unsubClipboard = window.tdm.onClipboardUrl((url) => {
-  showClipboardToast(url);
+const unsubClipboard = window.tdm.onClipboardUrl((data) => {
+  let url = typeof data === 'string' ? data : data.url;
+  let headers = typeof data === 'string' ? {} : (data.headers || {});
+  showClipboardToast(url, headers);
 });
 
 // ===== INIT =====

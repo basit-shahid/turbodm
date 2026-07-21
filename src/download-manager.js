@@ -62,6 +62,7 @@ class DownloadManager extends EventEmitter {
           fileName: d.fileName,
           id: d.id,
           modePreference: d.modePreference,
+          headers: d.headers,
         });
         
         engine.fileSize = d.fileSize;
@@ -160,6 +161,7 @@ class DownloadManager extends EventEmitter {
       id: options.id,
       formatId: options.formatId,
       modePreference: options.modePreference || 'auto',
+      headers: options.headers,
     });
 
     // Get file info first

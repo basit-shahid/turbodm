@@ -19,6 +19,7 @@ class DownloadEngine extends EventEmitter {
     this.modePreference = options.modePreference || 'auto'; // auto, parallel, single
 
     this.id = options.id || Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    this.headers = options.headers || {};
     // Extract filename from URL, properly decode %20 etc.
     let urlFileName = '';
     try {
@@ -92,6 +93,7 @@ class DownloadEngine extends EventEmitter {
       'DNT': '1',
       'Connection': 'keep-alive',
       'Upgrade-Insecure-Requests': '1',
+      ...this.headers,
     };
   }
 
@@ -119,7 +121,7 @@ class DownloadEngine extends EventEmitter {
 
   async getFileInfo() {
     return new Promise((resolve, reject) => {
-      const makeRequest = (requestUrl, redirectCount = 0) => {
+      const makeRequest = (requestUrl, redirectCount = 0, overrideMethod = 'HEAD') => {
         if (redirectCount > 5) {
           reject(new Error('Too many redirects'));
           return;
@@ -132,46 +134,41 @@ class DownloadEngine extends EventEmitter {
           hostname: parsedUrl.hostname,
           port: parsedUrl.port,
           path: parsedUrl.pathname + parsedUrl.search,
-          method: 'HEAD',
+          method: overrideMethod,
           headers: this._getDefaultHeaders(),
           agent: this._getAgent(parsedUrl.protocol),
           timeout: this.rangeProbeTimeout,
         };
+        
+        if (overrideMethod === 'GET') {
+          reqOptions.headers['Range'] = 'bytes=0-0';
+        }
 
         const req = client.request(reqOptions, async (res) => {
           if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
             const redirectUrl = new URL(res.headers.location, requestUrl).href;
             this.redirectedUrl = redirectUrl;
-            makeRequest(redirectUrl, redirectCount + 1);
+            makeRequest(redirectUrl, redirectCount + 1, overrideMethod);
             return;
           }
 
-          if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
-            const redirectUrl = new URL(res.headers.location, requestUrl).href;
-            this.redirectedUrl = redirectUrl;
-            makeRequest(redirectUrl, redirectCount + 1);
-            return;
-          }
-
-          if (res.statusCode === 403 && redirectCount === 0) {
-            // Retry 403 with browser UA
+          if ([403, 405, 501].includes(res.statusCode) && overrideMethod === 'HEAD' && redirectCount === 0) {
+            // Hard reject for HEAD on pre-signed URLs. Fallback safely to GET with minimal payload range.
             res.destroy();
-            const retryUrl = requestUrl;
-            const retryReqOptions = {
-              hostname: parsedUrl.hostname,
-              port: parsedUrl.port,
-              path: parsedUrl.pathname + parsedUrl.search,
-              method: 'HEAD',
-              headers: this._getDefaultHeaders(true),
-              agent: this._getAgent(parsedUrl.protocol),
-              timeout: this.rangeProbeTimeout,
-            };
-            const retryReq = client.request(retryReqOptions, (retryRes) => {
+            makeRequest(requestUrl, redirectCount, 'GET');
+            return;
+          }
+
+          // Special case: retry generic 403 with browser User-Agent if GET fallback also fails or isn't used
+          if (res.statusCode === 403 && overrideMethod === 'GET' && redirectCount === 0) {
+            res.destroy();
+            reqOptions.headers = this._getDefaultHeaders(true);
+            const retryReq = client.request(reqOptions, (retryRes) => {
               if (retryRes.statusCode >= 200 && retryRes.statusCode < 300) {
-                // Retry succeeded with browser UA
-                req.emit('retry-success');
+                req.emit('retry-success', retryRes);
                 return;
               }
+              retryRes.destroy();
               reject(new Error(`HTTP ${retryRes.statusCode}: ${retryRes.statusMessage}`));
             });
             retryReq.on('error', (err) => reject(err));
@@ -180,6 +177,7 @@ class DownloadEngine extends EventEmitter {
           }
 
           if (res.statusCode < 200 || res.statusCode >= 300) {
+            res.destroy();
             reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
             return;
           }
@@ -251,6 +249,8 @@ class DownloadEngine extends EventEmitter {
             }
           }
 
+          res.destroy(); // Safely terminate the stream to prevent downloading the payload during metadata check!
+          
           resolve({
             fileSize: this.fileSize,
             supportsRange: this.supportsRange,
@@ -1087,6 +1087,7 @@ class DownloadEngine extends EventEmitter {
       modePreference: this.modePreference,
       connectionMode: this.connectionMode,
       transportNotice: this.transportNotice,
+      headers: this.headers,
       chunks: this.chunks.map(c => ({
         index: c.index,
         start: c.start,

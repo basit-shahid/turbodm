@@ -75,72 +75,32 @@ document.addEventListener('click', (event) => {
 // automatically retry sending the URL every 1.5 s for up to 15 s so the
 // download is captured the moment TurboDM finishes starting.
 
-let retryTimer = null;
+let retryTimer = null; // Left for backwards compatibility safety
 
 function launchProtocolAndRetry(url) {
   // Trigger protocol in the current tab via hidden iframe (no new tab)
+  // We no longer actively poll via fetch() from the content script because
+  // doing so from a public webpage triggers Chrome's "Private Network Access" security dialog.
+  // The protocol handler (turbodm://) will securely communicate the URL to the app via process.argv!
   const iframe = document.createElement('iframe');
   iframe.style.display = 'none';
   iframe.src = 'turbodm://?url=' + encodeURIComponent(url);
   document.body.appendChild(iframe);
   setTimeout(() => iframe.remove(), 2000);
-
-  // Clear any previous retry loop
-  if (retryTimer) clearInterval(retryTimer);
-
-  // Auto-retry: poll the local server until TurboDM comes up
-  const startTime = Date.now();
-  retryTimer = setInterval(async () => {
-    if (Date.now() - startTime > RETRY_MAX_DURATION_MS) {
-      clearInterval(retryTimer);
-      retryTimer = null;
-      return;
-    }
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 2000);
-      const resp = await fetch(TURBODM_API, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (resp.ok) {
-        // Success — TurboDM received the URL, stop retrying
-        clearInterval(retryTimer);
-        retryTimer = null;
-      }
-    } catch {
-      // Server still not up — keep retrying
-    }
-  }, RETRY_INTERVAL_MS);
 }
 
 // ── Send to TurboDM ─────────────────────────────────────────
 
 function sendToTurboDM(url) {
   if (isSkippableUrl(url)) return;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
-
-  fetch(TURBODM_API, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
-    signal: controller.signal,
-  })
-    .then((resp) => {
-      if (!resp.ok) throw new Error('Server error');
-    })
-    .catch(() => {
-      // Server not running — launch protocol in current tab + auto-retry
-      launchProtocolAndRetry(url);
-    })
-    .finally(() => {
-      clearTimeout(timeout);
-    });
+  // All download routings are securely passed to the background script which 
+  // possesses the permissions to fetch localhost without triggering PNA warnings.
+  try {
+    chrome.runtime.sendMessage({ type: 'turbodm-route-download', url });
+  } catch (err) {
+    // Fallback if extension context is somehow invalidated
+    launchProtocolAndRetry(url);
+  }
 }
 
 // Listen for background script asking us to trigger protocol in current tab

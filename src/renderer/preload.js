@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld('tdm', {
   getAllDownloads: () => ipcRenderer.invoke('get-all-downloads'),
 
   // File info
-  getFileInfo: (url, formatId) => ipcRenderer.invoke('get-file-info', url, formatId),
+  getFileInfo: (url, formatId, headers) => ipcRenderer.invoke('get-file-info', url, formatId, headers),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),

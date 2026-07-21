@@ -82,17 +82,26 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
   const url = downloadItem.finalUrl || downloadItem.url;
   if (!url) return;
 
-  // Skip files initiated by extensions and internal/blob/data URLs.
+  // Skip files initiated by extensions and internal/blob/data URLs. Let Chrome download them.
   if (downloadItem.byExtensionId) return;
-  if (shouldSkipRouting(url)) return;
+  if (SKIP_PATTERNS.some(pattern => pattern.test(url))) return;
 
-  // Cancel Chrome's built-in download and route to TurboDM
+  // We explicitly CANCEL Chrome's built-in download for all external URLs.
   chrome.downloads.cancel(downloadItem.id, () => {
     chrome.downloads.erase({ id: downloadItem.id }, () => {
       void chrome.runtime.lastError;
     });
   });
 
+  // If this exact URL was already sent to TurboDM recently (e.g. by content.js picking up the click),
+  // we do not want to route it to TurboDM again. 
+  const now = Date.now();
+  const lastSentAt = recentRoutedUrls.get(url);
+  if (lastSentAt && now - lastSentAt < RECENT_ROUTE_WINDOW_MS) {
+    return; // Already handled.
+  }
+  
+  recentRoutedUrls.set(url, now);
   sendToTurboDM(url, null);
 });
 
@@ -100,25 +109,43 @@ chrome.downloads.onCreated.addListener((downloadItem) => {
 // On failure, ask the content script of the current tab to trigger the protocol
 // in-page (no new tab) with auto-retry.
 function sendToTurboDM(url, tab) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3000);
+  // Grab headers (cookies, user-agent, referer)
+  const payload = { url: url, headers: {} };
+  
+  if (navigator.userAgent) {
+    payload.headers['User-Agent'] = navigator.userAgent;
+  }
+  
+  if (tab && tab.url) {
+    payload.headers['Referer'] = tab.url;
+  }
 
-  fetch(TURBODM_API, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ url: url }),
-    signal: controller.signal,
-  })
-    .catch((error) => {
-      console.error('TurboDM server not responding. Launching protocol in current tab.', error);
-      // Tell the content script to trigger the protocol in the current tab
-      launchInCurrentTab(url, tab);
+  // Get all cookies for the target URL
+  chrome.cookies.getAll({ url: url }, (cookies) => {
+    if (cookies && cookies.length > 0) {
+      payload.headers['Cookie'] = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+
+    fetch(TURBODM_API, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
     })
-    .finally(() => {
-      clearTimeout(timeout);
-    });
+      .catch((error) => {
+        console.error('TurboDM server not responding. Launching protocol in current tab.', error);
+        // Tell the content script to trigger the protocol in the current tab
+        launchInCurrentTab(url, tab);
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+      });
+  });
 }
 
 // Send a message to the content script of the active tab to launch the protocol

@@ -28,7 +28,7 @@ function handleProtocolUrl(url) {
       const targetUrl = parsed.searchParams.get('url');
       if (targetUrl) {
         if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
-          mainWindow.webContents.send('clipboard-url', targetUrl);
+          mainWindow.webContents.send('clipboard-url', { url: targetUrl, headers: {} });
           forceFocusWindow();
         } else {
           // Window not ready yet — queue for later
@@ -90,7 +90,7 @@ function createWindow() {
     // Flush any protocol URLs that arrived before the window was ready
     if (pendingProtocolUrls.length > 0) {
       pendingProtocolUrls.forEach((url) => {
-        mainWindow.webContents.send('clipboard-url', url);
+        mainWindow.webContents.send('clipboard-url', { url: url, headers: {} });
       });
       pendingProtocolUrls = [];
       forceFocusWindow();
@@ -152,7 +152,7 @@ function startClipboardWatcher() {
       lastClipboardText = text;
       if (isDownloadableUrl(text)) {
         if (mainWindow) {
-          mainWindow.webContents.send('clipboard-url', text);
+          mainWindow.webContents.send('clipboard-url', { url: text, headers: {} });
           forceFocusWindow();
         }
       }
@@ -194,7 +194,7 @@ function setupIPC() {
     return downloadManager.getAllDownloads();
   });
 
-  ipcMain.handle('get-file-info', async (_event, url, formatId) => {
+  ipcMain.handle('get-file-info', async (_event, url, formatId, headers) => {
     let isStreaming = false;
     try {
       const parsed = new URL(url);
@@ -203,7 +203,7 @@ function setupIPC() {
     } catch {}
 
     const EngineClass = isStreaming ? require('./src/ytdlp-engine') : require('./src/download-engine');
-    const engine = new EngineClass(url, '', { formatId });
+    const engine = new EngineClass(url, '', { formatId, headers });
     try {
       const info = await engine.getFileInfo();
       info.isStreaming = isStreaming;
@@ -266,6 +266,14 @@ if (process.defaultApp) {
   app.setAsDefaultProtocolClient('turbodm');
 }
 
+// Force Windows/Browsers to use the exact name "TurboDM" in permission dialogs
+if (process.platform === 'win32') {
+  const { exec } = require('child_process');
+  exec('REG ADD "HKCU\\Software\\Classes\\turbodm\\Application" /v "ApplicationName" /t REG_SZ /d "TurboDM" /f', (err) => {
+    if (err) console.error('Failed to set ApplicationName registry key:', err);
+  });
+}
+
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
   app.quit();
@@ -318,7 +326,7 @@ function createLocalServer() {
           const data = JSON.parse(body);
           if (data.url) {
             if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('clipboard-url', data.url);
+              mainWindow.webContents.send('clipboard-url', { url: data.url, headers: data.headers || {} });
               forceFocusWindow();
             }
             res.writeHead(200, { 'Content-Type': 'application/json' });

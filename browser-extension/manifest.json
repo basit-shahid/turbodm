@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "TurboDM Browser Integration",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Send links directly to TurboDM Download Manager",
   "permissions": [
     "contextMenus",
     "downloads",
-    "downloads.ui"
+    "downloads.ui",
+    "cookies"
   ],
   "host_permissions": [
     "<all_urls>"
